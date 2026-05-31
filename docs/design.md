@@ -191,7 +191,9 @@ The human is pulled in **only** for the ambiguous `pending` row. For local/obser
 
 §6 covers *interactive* resume (you reopen Claude Code; SessionStart surfaces the task; you confirm). This section adds an **opt-in autonomous mode** that resumes a task **without you reopening anything** — most importantly across a usage-limit "break," where Claude must stop, wait for the limit to reset, and pick the task back up on its own.
 
-**Prior art (adopted):** `research.sh` (`~/Documents/Tech/Distributed-Systems/Core-Technologies/research.sh`) is a working implementation of this exact pattern — a file-as-queue (`learning_topics.md`, status by line prefix `none|@|#`), `flock`-serialized mutations (lock held only for the fast critical section, released during the long `claude` run), PID-file stale recovery, and a self-managed crontab that **on hitting a usage limit parses the reset time, reschedules itself to fire at the reset, reverts in-flight work to waiting, and exits** — then resumes when cron re-fires. waypoint adopts this mechanism.
+**Prior art (idea borrowed, not depended on):** `research.sh` (`~/Documents/Tech/Distributed-Systems/Core-Technologies/research.sh`) is a working implementation of this pattern — a file-as-queue (`learning_topics.md`, status by line prefix `none|@|#`), `flock`-serialized mutations (lock held only for the fast critical section, released during the long `claude` run), PID-file stale recovery, and a self-managed crontab that **on hitting a usage limit parses the reset time, reschedules itself to fire at the reset, reverts in-flight work to waiting, and exits** — then resumes when cron re-fires.
+
+> **Decoupling:** the *general* form of this mechanism (a reusable file-based, cron-driven, rate-limit-aware task queue) is being extracted into a **separate task-queue project**. waypoint deliberately does **not** depend on it — `waypoint-cron.sh` here is a thin, self-contained borrowing of the *idea* (manual resume is the default; cron auto-resume is opt-in). If the two ever converge, waypoint could later delegate scheduling to that engine, but the MVP stays standalone.
 
 ### Mechanism
 

@@ -1,5 +1,9 @@
 # waypoint
 
+[![CI](https://github.com/tonychen15/claude-waypoint/actions/workflows/ci.yml/badge.svg)](https://github.com/tonychen15/claude-waypoint/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg)](https://www.python.org/)
+
 **Resume an interrupted multi-step task in Claude Code — after a crash, a token-limit stop, or a closed window — and continue forward as if you'd just taken a coffee break.**
 
 `waypoint` is a generic, file-based mechanism for Claude Code that records the state of a tracked multi-step task as it progresses, so a fresh session can pick up exactly where the last one stopped — after a close, a crash, or a token-limit interruption.

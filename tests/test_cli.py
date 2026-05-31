@@ -124,3 +124,19 @@ def test_steps_lists_markers_and_counter(root, capsys):
     assert "1 of 2 done" in out
     assert "✓ a" in out
     assert "☐ b" in out
+
+
+def test_where_prints_state_and_task_dirs(root, capsys):
+    cli.main(["start", "--goal", "g", "--id", "t1", "--root", root])
+    capsys.readouterr()
+    assert cli.main(["where", "--id", "t1", "--root", root]) == 0
+    out = capsys.readouterr().out
+    assert store.waypoint_dir(root) in out
+    assert store.task_dir(root, "t1") in out
+
+
+def test_where_errors_for_missing_task(root):
+    # An explicit --id that doesn't exist errors cleanly (no bogus path).
+    assert cli.main(["where", "--id", "nope", "--root", root]) == 1
+
+

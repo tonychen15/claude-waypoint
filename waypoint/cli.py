@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import subprocess
 import sys
@@ -255,6 +256,28 @@ def _purpose_for(task: dict, step_id: str) -> str:
     return ""
 
 
+def cmd_where(root: str, args) -> int:
+    print(f"state dir:  {store.waypoint_dir(root)}")
+    # Show the resolved task dir(s): the named/inferred one, else all active.
+    if args.id:
+        targets = [args.id]
+    else:
+        targets = [tid for tid, _ in store.active_tasks(root)]
+    if not targets:
+        print("(no active task)")
+        return 0
+    rc = 0
+    for tid in targets:
+        td = store.task_dir(root, tid)
+        if not os.path.isdir(td):
+            print(f"waypoint: no such task {tid!r}", file=sys.stderr)
+            rc = 1
+            continue
+        print(f"task dir:   {td}")
+        print(f"  {store.STATE_FILE}, {store.STATUS_FILE}")
+    return rc
+
+
 def cmd_steps(root: str, args) -> int:
     task_id, task = _resolve(root, args.id)
     if progress.has_plan(task):
@@ -333,7 +356,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     for name, fn in (("current", cmd_current), ("resume", cmd_resume),
                      ("check", cmd_check), ("done", cmd_done),
-                     ("abandon", cmd_abandon), ("steps", cmd_steps)):
+                     ("abandon", cmd_abandon), ("steps", cmd_steps),
+                     ("where", cmd_where)):
         s = sub.add_parser(name, parents=[common]); s.set_defaults(fn=fn)
         s.add_argument("--id")
 

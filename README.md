@@ -89,6 +89,17 @@ python3 -m venv .venv
 
 Needs `at` (preferred) or cron. Start a task with `waypoint start --auto`; on a usage limit it reschedules itself to wake at the reset time (design §6A). Override the headless model with `WAYPOINT_CLAUDE_MODEL`.
 
+### Uninstall
+
+```bash
+pip uninstall claude-waypoint          # or: pipx uninstall claude-waypoint
+rm -rf ~/.claude/hooks/session_start.py ~/.claude/hooks/pre_tool_use.py \
+       ~/.claude/hooks/pre_compact.py ~/.claude/skills/waypoint
+# then remove the waypoint "hooks" block you added to ~/.claude/settings.json
+```
+
+Per-project cleanup (optional): delete `<project>/.claude/waypoint/` to drop saved task state. If you used `--auto`, remove the cron line (`crontab -e`, delete the `# waypoint-cron:` entry) and any pending one-shot jobs (`atq` / `atrm`). waypoint makes **no network requests** itself; the only outbound traffic is the optional `--auto` mode invoking `claude` (Anthropic API). It never uses `--dangerously-skip-permissions` — headless runs use a scoped tool allowlist.
+
 ## Usage
 
 In practice **Claude drives these commands for you** via the `waypoint` skill — you just say "track this" and approve a plan. The commands below are what runs under the hood (and what you'd type to inspect or steer a task yourself).

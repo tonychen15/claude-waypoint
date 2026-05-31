@@ -15,9 +15,16 @@ dependencies = []
 [project.scripts]
 waypoint = "waypoint.cli:main"
 
+[project.urls]
+Homepage = "https://github.com/tonychen15/claude-waypoint"
+Repository = "https://github.com/tonychen15/claude-waypoint"
+
 [tool.setuptools]
 packages = ["waypoint"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+# Put the repo root on sys.path so `import waypoint` resolves without an
+# install (replaces the previous empty conftest.py).
+pythonpath = ["."]

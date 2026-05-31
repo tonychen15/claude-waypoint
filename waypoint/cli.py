@@ -243,12 +243,13 @@ def cmd_resume(root: str, args) -> int:
         print("  Re-run via observe-then-act: inspect current state, do only "
               "what remains.")
     else:
-        nxt = (task.get("pending") or [None])[0]
-        if nxt:
+        rem = progress.remaining(task)
+        if rem:
+            nxt = rem[0]
             print(f"\nNo step in progress. Next planned: {nxt.get('id')} — "
                   f"{nxt.get('purpose')}. Declare it with `waypoint set-step`.")
         else:
-            print("\nNo step in progress and nothing pending.")
+            print("\nNo step in progress and nothing planned.")
     return 0
 
 

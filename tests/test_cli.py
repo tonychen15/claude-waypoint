@@ -71,6 +71,23 @@ def test_resume_reports_and_done_archives(root, capsys):
     assert store.active_tasks(root) == []
 
 
+def test_resume_points_at_next_planned_step(root, capsys):
+    # After committing a step, resume should name the next planned step
+    # (sourced from the permanent plan, not the removed 'pending' key).
+    cli.main(["start", "--goal", "g", "--id", "t1", "--root", root])
+    cli.main(["plan", "--step", "a", "--purpose", "first", "--id", "t1",
+              "--root", root])
+    cli.main(["plan", "--step", "b", "--purpose", "second", "--id", "t1",
+              "--root", root])
+    cli.main(["set-step", "--step", "a", "--purpose", "first", "--id", "t1",
+              "--root", root])
+    cli.main(["commit", "--summary", "did a", "--id", "t1", "--root", root])
+    capsys.readouterr()
+    assert cli.main(["resume", "--id", "t1", "--root", root]) == 0
+    out = capsys.readouterr().out
+    assert "Next planned: b" in out
+
+
 def test_version_flag(capsys):
     import pytest as _pytest
     with _pytest.raises(SystemExit) as e:

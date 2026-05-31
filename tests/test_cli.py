@@ -156,3 +156,16 @@ def test_status_shows_progress_line(root, capsys):
     assert "0 of 1 done" in capsys.readouterr().out
 
 
+def test_list_shows_folder_header_and_progress(root, capsys):
+    import os
+    cli.main(["start", "--goal", "build it", "--id", "t1", "--root", root])
+    cli.main(["plan", "--step", "a", "--purpose", "first", "--id", "t1",
+              "--root", root])
+    capsys.readouterr()
+    assert cli.main(["list", "--root", root]) == 0
+    out = capsys.readouterr().out
+    assert os.path.basename(root) in out      # folder name header
+    assert root in out                          # abs path header
+    assert "t1" in out and "0/1 done" in out    # task line + progress token
+
+

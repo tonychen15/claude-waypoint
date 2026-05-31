@@ -295,14 +295,13 @@ def cmd_steps(root: str, args) -> int:
 
 
 def cmd_list(root: str, args) -> int:
+    print(f"# {os.path.basename(root.rstrip('/')) or root}  {root}")
     active = store.active_tasks(root)
     if not active:
         print("(no active tasks)")
         return 0
     for tid, t in active:
-        cur = t.get("current_step")
-        where = f"step {cur.get('id')}" if cur else "between steps"
-        print(f"{tid}  [{where}]  {t.get('goal')}")
+        print(f"{tid}  [{progress.token(t)}]  {t.get('goal')}")
     return 0
 
 

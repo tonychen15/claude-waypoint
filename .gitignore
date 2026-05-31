@@ -1,0 +1,11 @@
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+venv/
+# State (per-project, never committed in the tool repo)
+.claude/waypoint/
+# Editors
+.idea/
+.vscode/

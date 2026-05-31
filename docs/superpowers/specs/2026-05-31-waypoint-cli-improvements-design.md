@@ -214,6 +214,27 @@ step. Native `claude --resume` is best-effort and may or may not succeed;
 waypoint's checkpoint discipline is what makes resume *guaranteed*. This is
 the reason the tool exists.
 
+**Pane A ⇄ pane B handoff protocol (user, 2026-05-31):**
+
+- **Plan ownership lives in pane A.** The reconciler holds the declared
+  roadmap (the `plan` from Phase 1: `waypoint plan ...`).
+- **Pane B starts in *plan mode*.** The spawned Claude Code worker launches in
+  plan mode by default (does not edit until it has a plan), and **borrows the
+  steps pane A already planned** — i.e. it loads the task's `plan` roadmap and
+  works through it rather than re-planning from scratch.
+- **Pane B writes checkpoints.** As it executes, pane B's CC calls
+  `waypoint set-step`/`commit`, saving checkpoint state into the shared
+  `.claude/waypoint/<task>/` folder.
+- **The waypoint folder *is* the channel.** Pane A and pane B do not talk over
+  a socket; they communicate **through the checkpoint files** in the waypoint
+  folder. Pane A watches those files to know what pane B is doing, detect
+  stalls, and drive the guaranteed-resume takeover. Single source of truth,
+  crash-durable, inspectable by the human at any time.
+
+This means Phase 1's on-disk state (`waypoint.json`/`STATUS.md`, the permanent
+`plan`, fingerprinted artifacts) is also the Phase 2 IPC substrate — a reason
+to keep that format clean and atomic (it already is, via tmp+rename writes).
+
 **Research notes (feasibility, to be verified against live `claude --help`):**
 
 - Headless spawn exists (`claude -p ... --output-format stream-json

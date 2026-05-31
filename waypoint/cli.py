@@ -40,7 +40,8 @@ def _resolve(root: str, task_id: Optional[str]) -> tuple:
     """Return ``(task_id, task)``; infer the single active task if id omitted.
 
     Raises:
-        SystemExit: If the id is missing and the active task is ambiguous.
+        ValueError: If the id is missing and the active task is ambiguous
+            (zero or multiple). ``main`` catches this and exits 1.
     """
     if task_id:
         return task_id, store.load(root, task_id)
@@ -48,9 +49,11 @@ def _resolve(root: str, task_id: Optional[str]) -> tuple:
     if len(active) == 1:
         return active[0]
     if not active:
-        raise SystemExit("waypoint: no active task; pass --id")
-    ids = ", ".join(tid for tid, _ in active)
-    raise SystemExit(f"waypoint: multiple active tasks ({ids}); pass --id")
+        raise ValueError("no active task in this folder")
+    ids = "\n  ".join(tid for tid, _ in active)
+    raise ValueError(
+        f"{len(active)} active tasks here — rerun with --id <one of>:\n  {ids}"
+    )
 
 
 def cmd_start(root: str, args) -> int:
@@ -203,11 +206,16 @@ def _check(task: dict) -> list:
 
 
 def cmd_check(root: str, args) -> int:
+    """Re-verify the last committed step's artifacts (drift detection)."""
     _, task = _resolve(root, args.id)
     results = _check(task)
     bad = [(p, v) for p, v in results if v != fingerprint.INTACT]
+    if not results:
+        print("no artifacts recorded on the last committed step")
+        return 0
+    print("last committed step's artifacts:")
     for path, verdict in results:
-        print(f"{verdict:8} {path}")
+        print(f"  {verdict.upper():8} {path}")
     return 1 if bad else 0
 
 
@@ -371,12 +379,18 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--purpose", required=True)
     s.add_argument("--id")
 
-    for name, fn in (("resume", cmd_resume),
-                     ("check", cmd_check), ("done", cmd_done),
+    for name, fn in (("resume", cmd_resume), ("done", cmd_done),
                      ("abandon", cmd_abandon), ("steps", cmd_steps),
                      ("where", cmd_where)):
         s = sub.add_parser(name, parents=[common]); s.set_defaults(fn=fn)
         s.add_argument("--id")
+
+    s = sub.add_parser(
+        "check", parents=[common],
+        help="re-verify the last committed step's artifacts (INTACT/MISSING/CHANGED)",
+    )
+    s.set_defaults(fn=cmd_check)
+    s.add_argument("--id")
 
     s = sub.add_parser("status", parents=[common]); s.set_defaults(fn=cmd_status)
     s.add_argument("--id")

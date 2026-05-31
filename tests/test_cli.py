@@ -195,3 +195,28 @@ def test_quiet_collapses_commit_output(root, capsys):
     assert "committed" in out
 
 
+def test_ambiguous_id_error_lists_candidates(root, capsys):
+    cli.main(["start", "--goal", "g1", "--id", "t1", "--root", root])
+    cli.main(["start", "--goal", "g2", "--id", "t2", "--root", root])
+    # No --id with two active tasks -> exit 1 and both ids surfaced.
+    rc = cli.main(["status", "--root", root])
+    err = capsys.readouterr().err
+    assert rc == 1
+    assert "t1" in err and "t2" in err
+    assert "--id" in err
+
+
+def test_check_output_labels_artifacts(root, tmp_path, capsys):
+    art = tmp_path / "out.txt"
+    art.write_text("r")
+    cli.main(["start", "--goal", "g", "--id", "t1", "--root", root])
+    cli.main(["set-step", "--step", "a", "--purpose", "p", "--id", "t1",
+              "--root", root])
+    cli.main(["commit", "--summary", "s", "--artifact", str(art),
+              "--id", "t1", "--root", root])
+    capsys.readouterr()
+    cli.main(["check", "--id", "t1", "--root", root])
+    out = capsys.readouterr().out
+    assert "INTACT" in out and str(art) in out
+
+

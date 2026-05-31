@@ -45,3 +45,61 @@ def test_last_succeeded():
     t["steps"] = [{"id": "a", "status": "succeeded"},
                   {"id": "b", "status": "succeeded"}]
     assert model.last_succeeded(t)["id"] == "b"
+
+
+def test_new_task_has_empty_plan_and_no_pending():
+    t = model.new_task("t1", "g")
+    assert t["plan"] == []
+    assert "pending" not in t
+
+
+def test_migrate_legacy_pending_reconstructs_full_roadmap():
+    # A legacy task: committed a, b; between steps; one planned 'c'.
+    legacy = {
+        "task_id": "t1", "goal": "g", "status": "in_progress",
+        "created_at": "2026-01-01T00:00:00+00:00", "steps": [
+            {"id": "a", "purpose": "first", "status": "succeeded"},
+            {"id": "b", "purpose": "second", "status": "succeeded"},
+        ],
+        "current_step": None,
+        "pending": [{"id": "c", "purpose": "third"}],
+    }
+    model.migrate(legacy)
+    assert [p["id"] for p in legacy["plan"]] == ["a", "b", "c"]
+    assert legacy["plan"][2]["purpose"] == "third"
+    assert "pending" not in legacy
+
+
+def test_migrate_legacy_without_pending_means_no_plan():
+    legacy = {
+        "task_id": "t1", "goal": "g", "status": "in_progress",
+        "created_at": "2026-01-01T00:00:00+00:00",
+        "steps": [{"id": "a", "purpose": "first", "status": "succeeded"}],
+        "current_step": None, "pending": [],
+    }
+    model.migrate(legacy)
+    assert legacy["plan"] == []
+
+
+def test_migrate_empty_pending_is_no_plan_but_keeps_current_step():
+    # Empty pending => no roadmap was declared => plan stays []. An active
+    # current_step must NOT be promoted into a plan (that would read as
+    # "step N of M" with no real finish line), but must be preserved intact.
+    legacy = {
+        "task_id": "t1", "goal": "g", "status": "in_progress",
+        "created_at": "2026-01-01T00:00:00+00:00",
+        "steps": [{"id": "a", "purpose": "first", "status": "succeeded"}],
+        "current_step": {"id": "b", "purpose": "second", "status": "in_progress"},
+        "pending": [],
+    }
+    model.migrate(legacy)
+    assert legacy["plan"] == []                       # no plan declared
+    assert legacy["current_step"]["id"] == "b"        # current step preserved
+    assert "pending" not in legacy
+
+
+def test_migrate_is_idempotent():
+    t = model.new_task("t1", "g")
+    t["plan"] = [{"id": "a", "purpose": "p"}]
+    model.migrate(t)
+    assert t["plan"] == [{"id": "a", "purpose": "p"}]

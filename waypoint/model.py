@@ -72,7 +72,7 @@ def new_task(task_id: str, goal: str, *, scope: Optional[list] = None,
         "scope": scope or [],
         "steps": [],
         "current_step": None,
-        "pending": [],
+        "plan": [],
     }
 
 
@@ -110,7 +110,52 @@ def validate(task: dict) -> list:
             errors.append("current_step must be an object or null")
         elif cur.get("status") != STEP_IN_PROGRESS:
             errors.append("current_step.status must be 'in_progress'")
+    if not isinstance(task.get("plan", []), list):
+        errors.append("plan must be a list")
     return errors
+
+
+def migrate(task: dict) -> dict:
+    """Upgrade a task dict in place to the current shape.
+
+    Ensures a permanent ``plan`` roadmap exists. Legacy tasks stored a
+    consumed-away ``pending`` queue and no ``plan``; when there is forward
+    intent (non-empty ``pending``), reconstruct the full roadmap from
+    committed steps + the current step + pending. Otherwise leave the plan
+    empty (no plan was ever declared). The obsolete ``pending`` key is
+    dropped. Idempotent and never raises on a well-formed task.
+
+    Note: an empty ``pending`` yields ``plan == []`` *even if a
+    ``current_step`` is active*. That is deliberate — empty pending means no
+    roadmap was ever declared, so the task should read as "in step X, no
+    plan", not "step N of M" (which would falsely imply a known finish line).
+    The active ``current_step`` is NOT lost: it stays in
+    ``task["current_step"]`` and remains fully resumable; it is simply not
+    promoted into a declared plan. This preserves the no-plan vs plan-done
+    distinction for legacy data.
+
+    Args:
+        task: The task dict (mutated in place).
+
+    Returns:
+        The same task dict, for chaining.
+    """
+    if "plan" not in task:
+        pending = task.get("pending") or []
+        if pending:
+            plan = [{"id": s.get("id") or "", "purpose": s.get("purpose") or ""}
+                    for s in (task.get("steps") or [])]
+            cur = task.get("current_step")
+            if cur:
+                plan.append({"id": cur.get("id") or "",
+                             "purpose": cur.get("purpose") or ""})
+            plan.extend({"id": p.get("id") or "", "purpose": p.get("purpose") or ""}
+                        for p in pending)
+            task["plan"] = plan
+        else:
+            task["plan"] = []
+    task.pop("pending", None)
+    return task
 
 
 def last_succeeded(task: dict) -> Optional[dict]:

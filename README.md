@@ -89,6 +89,8 @@ Needs `at` (preferred) or cron. Start a task with `waypoint start --auto`; on a 
 
 In practice **Claude drives these commands for you** via the `waypoint` skill — you just say "track this" and approve a plan. The commands below are what runs under the hood (and what you'd type to inspect or steer a task yourself).
 
+> **Where does this run?** `waypoint` is an ordinary terminal command — *not* a subcommand of the `claude` CLI. Inside a session, Claude Code runs it for you through its Bash tool; you can also run it yourself in any shell (e.g. `waypoint status`) to inspect or recover a task. The hooks are executed automatically by the Claude Code harness (never by hand), and `waypoint-cron.sh` runs from cron. This is why the install puts `waypoint` on your PATH and makes `waypoint` importable by the hook interpreter — see [Installation](#installation).
+
 | Command | What it does |
 |---|---|
 | `waypoint start --goal "<g>" [--scope <p>…] [--auto]` | Begin a tracked task; arms the tripwire. |

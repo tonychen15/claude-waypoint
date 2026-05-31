@@ -26,6 +26,7 @@ re-hydrate from the last committed step's artifacts → continue forward (coffee
 - **Resume integrity** — each step's result artifacts are fingerprinted (`git hash-object`); on resume, a changed/missing file is detected and surfaced rather than silently trusted.
 - **Idempotent side effects** — outbound third-party writes (Telegram, email, POST, `git push`) use a write-ahead ledger so they are never double-fired on re-run.
 - **No silent state mutation** — paused tasks persist byte-for-byte; the system reports staleness but never auto-archives by age. You decide.
+- **Autonomous resume across a rate-limit break** (opt-in `--auto`) — a thin cron trigger relaunches the task headless, and on a usage-limit it reschedules itself to wake at the reset time. Headless runs stop at every human gate (outbound writes, ambiguous effects) rather than firing them unattended. Adapted from a proven `research.sh` orchestrator pattern.
 
 ## Status
 

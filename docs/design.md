@@ -187,6 +187,44 @@ The human is pulled in **only** for the ambiguous `pending` row. For local/obser
 
 ---
 
+## 6A. Autonomous resume via cron (rate-limit-aware break)
+
+§6 covers *interactive* resume (you reopen Claude Code; SessionStart surfaces the task; you confirm). This section adds an **opt-in autonomous mode** that resumes a task **without you reopening anything** — most importantly across a usage-limit "break," where Claude must stop, wait for the limit to reset, and pick the task back up on its own.
+
+**Prior art (adopted):** `research.sh` (`~/Documents/Tech/Distributed-Systems/Core-Technologies/research.sh`) is a working implementation of this exact pattern — a file-as-queue (`learning_topics.md`, status by line prefix `none|@|#`), `flock`-serialized mutations (lock held only for the fast critical section, released during the long `claude` run), PID-file stale recovery, and a self-managed crontab that **on hitting a usage limit parses the reset time, reschedules itself to fire at the reset, reverts in-flight work to waiting, and exits** — then resumes when cron re-fires. waypoint adopts this mechanism.
+
+### Mechanism
+
+- **`waypoint-cron.sh`** — a thin trigger (modeled on `research.sh`), fired by cron. It is *not* a `while true` loop. It:
+  1. uses `flock` for single-instance safety (held only briefly);
+  2. runs `revert_stale`-style reclaim (dead `owner`/stale `heartbeat` → in-flight step stays `in_progress`, lock released) — this is the §8 lease/heartbeat reclaim, concretely;
+  3. relaunches `claude -p "<resume contract for the active task>"` **headless** with scoped `--allowedTools` (not blanket skip-permissions, so human gates stay real).
+- **Rate-limit reschedule:** after the headless run, scan output for the usage-limit signal and reset time; compute the reset moment and install a **one-shot** wake-up (`at`, or a self-removing cron entry) at that time. On limit, the task is left `in_progress` (the in-flight step re-runs on resume — §2). A **safety-net heartbeat** cron (default every 2h, configurable) catches stuck/orphaned tasks.
+- **Self-chaining:** on a clean finish with steps still `pending`, re-invoke to keep going; on `/waypoint done|abandon`, **remove the cron entry** (`set_cron ""`).
+
+### Two resume modes
+
+| Mode | Trigger | Behavior |
+|---|---|---|
+| **Interactive** (default) | you reopen Claude Code → SessionStart hook | surfaces the task, you confirm, then seamless continue (§6) |
+| **Autonomous** (`/waypoint start --auto`) | `waypoint-cron.sh` via cron | headless relaunch + rate-limit reschedule + heartbeat; **no confirmation** |
+
+### Headless has no human — so it stops at every human gate
+
+Autonomous resume runs **forward only up to the next human-gate**, then **stops, leaves the task `in_progress`, and notifies** (same stop-and-reschedule path as a rate-limit). It never auto-fires a human-gated action. The gates that halt an autonomous run:
+
+- an **outbound third-party write** (§5) — always human in this design;
+- an **ambiguous `pending`** effect-ledger entry (§5);
+- an integrity **"go deep" mismatch** (§9) — a file changed underneath the task.
+
+So autonomous mode makes progress on the *auto-safe* portion of a task across breaks, and hands the human-gated remainder back to the next interactive session. This keeps the coffee-break guarantee and the safety guarantees simultaneously.
+
+### Improvements over the `research.sh` reference
+
+- **One-shot, not recurring:** `research.sh` installs `0 $hour * * *` (fires *every* day at that hour). waypoint computes a one-shot wake-up at the actual reset instant and removes it after firing.
+- **Date-rollover + timezone:** parse minutes and day-rollover (a limit that resets after midnight), and compute against the project timezone (the knowledge-base project uses UTC+8), not a bare same-day hour.
+- **Structured signal:** prefer a structured rate-limit signal over grepping `"hit your limit"` prose when one is available from the harness.
+
 ## 7. Staleness: report, never auto-act
 
 The system **never mutates a task based on age.** A paused task persists byte-for-byte until *you* touch it. Age is only a **display label** (`active` / `inactive`).
@@ -264,9 +302,9 @@ Nothing in the Claude Code ecosystem combines what this design does. The closest
 
 ### `/waypoint` skill (lifecycle command)
 
-- `/waypoint start "goal"` — plan the task (plan mode), mint `task_id`, seed `waypoint.json` from the approved plan, arm the gate. On collision with an active task, prompt resume/set-aside/cancel.
-- `/waypoint done` — set `completed`, move to `archive/`, disarm.
-- `/waypoint abandon` — set `abandoned`, move to `archive/`.
+- `/waypoint start "goal" [--auto]` — plan the task (plan mode), mint `task_id`, seed `waypoint.json` from the approved plan, arm the gate. `--auto` enables autonomous cron resume (§6A) and installs the safety-net heartbeat. On collision with an active task, prompt resume/set-aside/cancel.
+- `/waypoint done` — set `completed`, move to `archive/`, disarm, **remove any cron entry** (§6A).
+- `/waypoint abandon` — set `abandoned`, move to `archive/`, **remove any cron entry**.
 - `/waypoint resume <task_id>` — adopt an orphaned task.
 - `/waypoint status` — print `STATUS.md`.
 
@@ -275,6 +313,10 @@ Nothing in the Claude Code ecosystem combines what this design does. The closest
 - **SessionStart** — surface unfinished tasks with age labels; offer resume (§6). Compact injection; skill re-asserts the contract.
 - **PreToolUse** (`Write|Edit|MultiEdit`) — enforce ≤1 uncommitted step (§10/§2); in concurrent mode, enforce the lease lock on contended files (§8). Exempt writes to `.claude/waypoint/**`.
 - **PreCompact** — copy/timestamp the current `waypoint.json` before token-limit compaction (shell-only — §6).
+
+### `waypoint-cron.sh` (autonomous mode — §6A)
+
+A thin cron-fired trigger (modeled on `research.sh`): `flock` single-instance, lease/heartbeat reclaim, headless `claude -p "resume <task_id>"` with scoped `--allowedTools`, rate-limit one-shot reschedule, safety-net heartbeat, self-chaining, and `set_cron`-style "remove-all-then-write-one" crontab management. Only installed for `--auto` tasks.
 
 ### Checkpoint library (shared by skill + hooks)
 
@@ -335,6 +377,7 @@ The approved plan ≈ the graph definition (nodes); a durable-state waypoint ≈
 | 7 | Lossy summary | Structured checkpoint: `context` + `expected_result` capture intent; resume re-reads artifacts |
 | 8 | Concurrency / global rollout | Task-keyed isolation + lease lock (not flock); global = doctrine + code, state per-project |
 | — | "Is this a saga?" | No — forward-recovery checkpoint-restart; renamed `saga` → `waypoint` (§2) |
+| — | Autonomous resume across a rate-limit break | Opt-in cron mode (§6A) adapted from `research.sh`: file-as-queue + `flock` + PID/lease reclaim + reset-time reschedule; headless run stops at every human gate |
 
 ---
 
@@ -345,3 +388,4 @@ The approved plan ≈ the graph definition (nodes); a durable-state waypoint ≈
 - Global promotion details (skill/hook discovery precedence when a project defines its own).
 - `archive/` retention (unbounded by design — revisit only if it ever matters).
 - SessionStart-injection reliability — measure how often the model acts on it; reinforce via the skill if low.
+- Autonomous mode (§6A): robust reset-time detection (structured signal vs prose grep), one-shot wake-up mechanism (`at` vs self-removing cron), timezone/date-rollover handling, and headless `--allowedTools` scoping per task.

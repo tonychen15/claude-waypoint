@@ -35,7 +35,7 @@ import subprocess
 import sys
 from typing import Optional
 
-from . import __version__, fingerprint, model, progress, store
+from . import __version__, fingerprint, model, progress, statusmd, store
 
 
 def _slug(text: str) -> str:
@@ -56,7 +56,7 @@ def _resolve(root: str, task_id: Optional[str]) -> tuple:
     if len(active) == 1:
         return active[0]
     if not active:
-        raise ValueError("no active task in this folder")
+        raise ValueError("no active task in this folder.")
     ids = "\n  ".join(tid for tid, _ in active)
     raise ValueError(
         f"{len(active)} active tasks here — rerun with --id <one of>:\n  {ids}"
@@ -189,14 +189,13 @@ def cmd_plan(root: str, args) -> int:
 
 
 def cmd_status(root: str, args) -> int:
-    if args.id is None and not store.active_tasks(root):
-        print("waypoint: no active task")
-        return 0
+    # No active task and no --id flows through _resolve for one canonical
+    # message ("no active task in this folder") and exit code (1), consistent
+    # with every other command.
     _, task = _resolve(root, args.id)
     if args.json:
         print(json.dumps(task, indent=2, ensure_ascii=False))
     else:
-        from . import statusmd
         print(statusmd.render(task))
     return 0
 

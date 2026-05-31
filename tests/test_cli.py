@@ -88,6 +88,13 @@ def test_resume_points_at_next_planned_step(root, capsys):
     assert "Next planned: b" in out
 
 
+def test_status_with_no_task_errors_consistently(root, capsys):
+    # No active task: status flows through _resolve for the canonical
+    # message and exit 1 (consistent with other commands).
+    assert cli.main(["status", "--root", root]) == 1
+    assert "no active task in this folder" in capsys.readouterr().err
+
+
 def test_version_flag(capsys):
     import pytest as _pytest
     with _pytest.raises(SystemExit) as e:

@@ -28,7 +28,7 @@ import subprocess
 import sys
 from typing import Optional
 
-from . import __version__, fingerprint, model, store
+from . import __version__, fingerprint, model, progress, store
 
 
 def _slug(text: str) -> str:
@@ -88,9 +88,6 @@ def cmd_set_step(root: str, args) -> int:
         "expected_result": args.expected or "",
         "status": model.STEP_IN_PROGRESS,
     }
-    # Drop the matching pending entry, if any.
-    task["pending"] = [s for s in task.get("pending", [])
-                       if s.get("id") != args.step]
     store.save(root, task)
     print(f"started step {args.step!r}")
     return 0
@@ -139,6 +136,22 @@ def cmd_commit(root: str, args) -> int:
     print(f"committed step {cur.get('id')!r} "
           f"({len(artifacts)} artifact(s))"
           + (f" @ {step_commit}" if step_commit else ""))
+    return 0
+
+
+def cmd_plan(root: str, args) -> int:
+    task_id, task = _resolve(root, args.id)
+    plan = task.setdefault("plan", [])
+    if any(p.get("id") == args.step for p in plan):
+        print(f"waypoint: step {args.step!r} is already in the plan",
+              file=sys.stderr)
+        return 1
+    plan.append({"id": args.step, "purpose": args.purpose})
+    store.save(root, task)
+    if not getattr(args, "quiet", False):
+        print(f"planned step {args.step!r} — {progress.summary(task)}")
+    else:
+        print(f"planned {args.step}")
     return 0
 
 
@@ -277,6 +290,11 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--summary")
     s.add_argument("--artifact", nargs="*")
     s.add_argument("--git", action="store_true")
+    s.add_argument("--id")
+
+    s = sub.add_parser("plan", parents=[common]); s.set_defaults(fn=cmd_plan)
+    s.add_argument("--step", required=True)
+    s.add_argument("--purpose", required=True)
     s.add_argument("--id")
 
     for name, fn in (("current", cmd_current), ("resume", cmd_resume),

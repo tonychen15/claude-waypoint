@@ -84,3 +84,26 @@ def test_infer_single_active_task(root):
     # No --id: should infer the single active task.
     assert cli.main(["set-step", "--step", "a", "--purpose", "p",
                      "--root", root]) == 0
+
+
+def test_plan_appends_and_rejects_duplicates(root):
+    cli.main(["start", "--goal", "g", "--id", "t1", "--root", root])
+    assert cli.main(["plan", "--step", "a", "--purpose", "first",
+                     "--id", "t1", "--root", root]) == 0
+    assert cli.main(["plan", "--step", "b", "--purpose", "second",
+                     "--id", "t1", "--root", root]) == 0
+    t = store.load(root, "t1")
+    assert [p["id"] for p in t["plan"]] == ["a", "b"]
+    # Duplicate id is refused.
+    assert cli.main(["plan", "--step", "a", "--purpose", "dup",
+                     "--id", "t1", "--root", root]) == 1
+
+
+def test_set_step_does_not_shrink_plan(root):
+    assert cli.main(["start", "--goal", "g", "--id", "t1", "--root", root]) == 0
+    assert cli.main(["plan", "--step", "a", "--purpose", "first", "--id", "t1",
+                     "--root", root]) == 0
+    assert cli.main(["set-step", "--step", "a", "--purpose", "first", "--id", "t1",
+                     "--root", root]) == 0
+    t = store.load(root, "t1")
+    assert [p["id"] for p in t["plan"]] == ["a"]   # roadmap intact

@@ -244,6 +244,40 @@ def cmd_abandon(root: str, args) -> int:
     return _close(root, args, model.ABANDONED)
 
 
+def _purpose_for(task: dict, step_id: str) -> str:
+    """Best-effort purpose text for a step id (committed step or plan entry)."""
+    for s in task.get("steps", []):
+        if s.get("id") == step_id:
+            return s.get("purpose", "")
+    for p in task.get("plan", []):
+        if p.get("id") == step_id:
+            return p.get("purpose", "")
+    return ""
+
+
+def cmd_steps(root: str, args) -> int:
+    task_id, task = _resolve(root, args.id)
+    if progress.has_plan(task):
+        head = (f"Steps for {task_id}   "
+                f"({progress.done_count(task)} of {progress.total_count(task)} done)")
+    else:
+        head = (f"Steps for {task_id}   "
+                f"({progress.done_count(task)} committed, no plan declared)")
+    print(head)
+    cur = task.get("current_step")
+    cur_id = cur.get("id") if cur else None
+    done_ids = {s.get("id") for s in task.get("steps", [])}
+    for sid in progress.ordered_ids(task):
+        if sid in done_ids:
+            mark, purpose = "✓", _purpose_for(task, sid)
+        elif sid == cur_id:
+            mark, purpose = "▶", cur.get("purpose", "")
+        else:
+            mark, purpose = "☐", _purpose_for(task, sid)
+        print(f"  {mark} {sid}  {purpose}")
+    return 0
+
+
 def cmd_list(root: str, args) -> int:
     active = store.active_tasks(root)
     if not active:
@@ -299,7 +333,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     for name, fn in (("current", cmd_current), ("resume", cmd_resume),
                      ("check", cmd_check), ("done", cmd_done),
-                     ("abandon", cmd_abandon)):
+                     ("abandon", cmd_abandon), ("steps", cmd_steps)):
         s = sub.add_parser(name, parents=[common]); s.set_defaults(fn=fn)
         s.add_argument("--id")
 

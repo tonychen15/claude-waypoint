@@ -107,3 +107,20 @@ def test_set_step_does_not_shrink_plan(root):
                      "--root", root]) == 0
     t = store.load(root, "t1")
     assert [p["id"] for p in t["plan"]] == ["a"]   # roadmap intact
+
+
+def test_steps_lists_markers_and_counter(root, capsys):
+    cli.main(["start", "--goal", "g", "--id", "t1", "--root", root])
+    cli.main(["plan", "--step", "a", "--purpose", "first", "--id", "t1",
+              "--root", root])
+    cli.main(["plan", "--step", "b", "--purpose", "second", "--id", "t1",
+              "--root", root])
+    cli.main(["set-step", "--step", "a", "--purpose", "first", "--id", "t1",
+              "--root", root])
+    cli.main(["commit", "--summary", "did a", "--id", "t1", "--root", root])
+    capsys.readouterr()  # clear
+    assert cli.main(["steps", "--id", "t1", "--root", root]) == 0
+    out = capsys.readouterr().out
+    assert "1 of 2 done" in out
+    assert "✓ a" in out
+    assert "☐ b" in out

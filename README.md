@@ -152,3 +152,7 @@ Implemented and tested — 31 passing tests, cross-LLM (Gemini) reviewed. See [`
 ## Why "waypoint"
 
 A waypoint is a marked point on a route that you pass through and **continue forward from** — which is exactly the recovery model (forward recovery from the last good point). The Claude Code ecosystem already saturates *checkpoint / handoff / session / resume / memory*; `waypoint` is a clean, accurate lane.
+
+## License
+
+[MIT](LICENSE) © 2026 tonychen15. Free to use, modify, and distribute — including commercially. The one condition is to **keep the copyright and license notice** (which links back to this repo) in copies and substantial portions.

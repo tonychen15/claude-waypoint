@@ -169,3 +169,29 @@ def test_list_shows_folder_header_and_progress(root, capsys):
     assert "t1" in out and "0/1 done" in out    # task line + progress token
 
 
+def test_commit_beat_shows_progress_by_default(root, capsys):
+    cli.main(["start", "--goal", "g", "--id", "t1", "--root", root])
+    cli.main(["plan", "--step", "a", "--purpose", "first", "--id", "t1",
+              "--root", root])
+    cli.main(["plan", "--step", "b", "--purpose", "second", "--id", "t1",
+              "--root", root])
+    cli.main(["set-step", "--step", "a", "--purpose", "first", "--id", "t1",
+              "--root", root])
+    capsys.readouterr()
+    cli.main(["commit", "--summary", "did a", "--id", "t1", "--root", root])
+    out = capsys.readouterr().out
+    assert "1 of 2 done" in out          # progress beat
+    assert "next" in out.lower() and "b" in out
+
+
+def test_quiet_collapses_commit_output(root, capsys):
+    cli.main(["start", "--goal", "g", "--id", "t1", "--root", root])
+    cli.main(["set-step", "--step", "a", "--purpose", "p", "--id", "t1",
+              "--root", root])
+    capsys.readouterr()
+    cli.main(["commit", "--summary", "x", "--id", "t1", "-q", "--root", root])
+    out = capsys.readouterr().out
+    assert "of" not in out               # no progress beat
+    assert "committed" in out
+
+

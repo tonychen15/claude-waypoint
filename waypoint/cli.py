@@ -69,7 +69,13 @@ def cmd_start(root: str, args) -> int:
     task = model.new_task(task_id, args.goal, scope=args.scope,
                           owner_session=args.session or "", auto=args.auto)
     store.save(root, task)
-    print(task_id)
+    if args.quiet:
+        print(task_id)
+    else:
+        print(f"started task {task_id}")
+        print(f"  goal: {task.get('goal')}")
+        print(f"  state: {store.task_dir(root, task_id)}")
+        print("  next: declare steps with `waypoint plan`, then `waypoint set-step`")
     return 0
 
 
@@ -89,7 +95,11 @@ def cmd_set_step(root: str, args) -> int:
         "status": model.STEP_IN_PROGRESS,
     }
     store.save(root, task)
-    print(f"started step {args.step!r}")
+    if args.quiet:
+        print(f"started step {args.step}")
+    else:
+        pos = progress.position_of(task, args.step)
+        print(f"▶ started step {args.step!r} (step {pos}) — {args.purpose}")
     return 0
 
 
@@ -133,9 +143,22 @@ def cmd_commit(root: str, args) -> int:
     task.setdefault("steps", []).append(cur)
     task["current_step"] = None
     store.save(root, task)
-    print(f"committed step {cur.get('id')!r} "
-          f"({len(artifacts)} artifact(s))"
-          + (f" @ {step_commit}" if step_commit else ""))
+    if args.quiet:
+        print(f"committed step {cur.get('id')!r}"
+              + (f" @ {step_commit}" if step_commit else ""))
+        return 0
+    done, total = progress.done_count(task), progress.total_count(task)
+    rem = progress.remaining(task)
+    if progress.has_plan(task):
+        beat = f"✓ committed step {cur.get('id')!r} — {done} of {total} done"
+        beat += (f"; next: step {rem[0]['id']} ({rem[0]['purpose']})"
+                 if rem else "; plan complete ✓")
+    else:
+        beat = (f"✓ committed step {cur.get('id')!r} — "
+                f"{done} step{'s' if done != 1 else ''} committed (no plan)")
+    if step_commit:
+        beat += f"  @ {step_commit}"
+    print(beat)
     return 0
 
 
@@ -310,6 +333,8 @@ def build_parser() -> argparse.ArgumentParser:
     # subcommand name (e.g. `waypoint start --root X`), not only before it.
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("--root", help="project root (default: auto-detect)")
+    common.add_argument("-q", "--quiet", action="store_true",
+                        help="collapse mutating-command output to one line")
 
     p = argparse.ArgumentParser(prog="waypoint", description=__doc__,
                                 parents=[common])

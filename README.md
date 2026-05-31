@@ -40,63 +40,33 @@ re-hydrate from the last committed step's artifacts → continue forward (coffee
 - **git** — used for `git hash-object` artifact fingerprints (falls back to SHA-256 if unavailable).
 - *Optional:* `at` (or cron) for autonomous resume (`--auto`).
 
-### Install the CLI
+Two one-command setups, both idempotent (safe to re-run). Each installs the `waypoint` CLI **and** wires the hooks + skill into Claude Code. Task state always lives per-project in `.claude/waypoint/`.
 
-The `waypoint` command must be on your PATH **and** importable by the `python3` that runs the hooks. Pick one:
+### 1. Install & enable globally (every project)
+
+One script installs the CLI, copies the hooks + skill into `~/.claude/`, and registers the hooks in `~/.claude/settings.json`:
 
 ```bash
+git clone https://github.com/tonychen15/claude-waypoint.git
 cd claude-waypoint
-
-# Debian/Ubuntu & other PEP 668 "externally-managed" systems (recommended).
-# Zero dependencies + --user means it only writes to ~/.local and never
-# touches apt/system packages, so --break-system-packages is safe here:
-pip install --user --break-system-packages .
-
-# — or, fully isolated (no --break-system-packages): a dedicated venv,
-#   with the command symlinked onto your PATH:
-python3 -m venv ~/.venvs/waypoint
-~/.venvs/waypoint/bin/pip install .
-ln -s ~/.venvs/waypoint/bin/waypoint ~/.local/bin/waypoint
-#   ...then point the hook commands (below) at ~/.venvs/waypoint/bin/python
-
-waypoint --help               # verify
+./scripts/install-global.sh
+waypoint --version            # verify
 ```
 
-> **Note on `pipx`:** `pipx install .` gives you the `waypoint` *command*, but the hooks run under the system `python3`, which can't `import waypoint` from pipx's isolated venv. For waypoint specifically, prefer `--user` or the venv above (or point the hook commands at the pipx venv's interpreter).
+Make sure `~/.local/bin` is on your PATH. The script tries a normal `pip install --user` first and only falls back to `--break-system-packages` on PEP 668 "externally-managed" systems (Debian/Ubuntu) — safe here, since the package has zero dependencies and writes only to `~/.local`. To undo, see [Uninstall](#uninstall).
 
-### Enable inside Claude Code
+### 2. Install & enable in a single project
 
-State always lives per-project in `.claude/waypoint/`; the *tooling* can be wired globally or per-project.
-
-**Global (recommended — available in every project):**
+Wire it into just one repo — the hooks + skill live in that project's `.claude/` (registered with `$CLAUDE_PROJECT_DIR`, so the wiring survives moving the project):
 
 ```bash
-mkdir -p ~/.claude/hooks ~/.claude/skills/waypoint
-cp hooks/*.py               ~/.claude/hooks/
-cp skills/waypoint/SKILL.md ~/.claude/skills/waypoint/
+cd /path/to/claude-waypoint
+./scripts/install-project.sh /path/to/your/project    # defaults to $PWD
 ```
 
-Merge into `~/.claude/settings.json` (absolute paths so they resolve everywhere; swap `python3` for your venv/pipx interpreter if needed):
+This installs the CLI (user-global) and copies the hooks + skill into `<project>/.claude/`, registering them in `<project>/.claude/settings.json`.
 
-```json
-{
-  "hooks": {
-    "SessionStart": [{ "hooks": [{ "type": "command", "command": "python3 ~/.claude/hooks/session_start.py" }] }],
-    "PreToolUse":   [{ "matcher": "Write|Edit|MultiEdit", "hooks": [{ "type": "command", "command": "python3 ~/.claude/hooks/pre_tool_use.py" }] }],
-    "PreCompact":   [{ "hooks": [{ "type": "command", "command": "python3 ~/.claude/hooks/pre_compact.py" }] }]
-  }
-}
-```
-
-**Single project:** copy `hooks/` and `skills/waypoint/` into that project's `.claude/`, then merge this repo's `.claude/settings.json` hook block (it already uses `$CLAUDE_PROJECT_DIR`).
-
-### Develop / run the tests
-
-```bash
-python3 -m venv .venv
-.venv/bin/pip install -e . pytest
-.venv/bin/python -m pytest          # 31 tests
-```
+> Prefer a fully isolated install (no `--break-system-packages`)? Create a venv, `pip install .` into it, symlink its `waypoint` onto your PATH, and re-point the hook commands at that venv's `python`. Contributors developing the tool can `pip install -e .` and run `python -m pytest` (the CI runs the same).
 
 ### Autonomous resume (optional)
 

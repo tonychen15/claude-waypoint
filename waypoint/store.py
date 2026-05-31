@@ -60,6 +60,11 @@ def _wp_dir(root: str) -> str:
     return os.path.join(root, ".claude", WAYPOINT_DIRNAME)
 
 
+def waypoint_dir(root: str) -> str:
+    """Public path to ``<root>/.claude/waypoint`` (the state directory)."""
+    return _wp_dir(root)
+
+
 def task_dir(root: str, task_id: str) -> str:
     """Return the directory holding ``task_id``'s state."""
     return os.path.join(_wp_dir(root), task_id)
@@ -126,7 +131,7 @@ def load(root: str, task_id: str) -> dict:
         FileNotFoundError: If no such task exists.
     """
     with open(state_path(root, task_id), encoding="utf-8") as fh:
-        return json.load(fh)
+        return model.migrate(json.load(fh))
 
 
 def list_tasks(root: str) -> list:
@@ -149,7 +154,7 @@ def list_tasks(root: str) -> list:
         if os.path.isfile(sp):
             try:
                 with open(sp, encoding="utf-8") as fh:
-                    out.append((name, json.load(fh)))
+                    out.append((name, model.migrate(json.load(fh))))
             except (OSError, json.JSONDecodeError):
                 continue
     return out

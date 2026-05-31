@@ -54,3 +54,27 @@ def test_save_is_atomic_no_tmp_left(tmp_path):
     tdir = store.task_dir(root, "t1")
     leftovers = [f for f in os.listdir(tdir) if ".tmp." in f]
     assert leftovers == []
+
+
+def test_load_migrates_legacy_pending_to_plan(tmp_path):
+    import json, os
+    root = str(tmp_path)
+    tdir = store.task_dir(root, "t1")
+    os.makedirs(tdir, exist_ok=True)
+    legacy = {
+        "task_id": "t1", "goal": "g", "status": "in_progress",
+        "created_at": "2026-01-01T00:00:00+00:00",
+        "steps": [{"id": "a", "purpose": "first", "status": "succeeded"}],
+        "current_step": None, "pending": [{"id": "b", "purpose": "second"}],
+    }
+    with open(store.state_path(root, "t1"), "w") as fh:
+        json.dump(legacy, fh)
+    t = store.load(root, "t1")
+    assert [p["id"] for p in t["plan"]] == ["a", "b"]
+    assert "pending" not in t
+
+
+def test_waypoint_dir_points_under_dot_claude(tmp_path):
+    import os
+    root = str(tmp_path)
+    assert store.waypoint_dir(root) == os.path.join(root, ".claude", "waypoint")

@@ -42,14 +42,27 @@ re-hydrate from the last committed step's artifacts → continue forward (coffee
 
 ### Install the CLI
 
+The `waypoint` command must be on your PATH **and** importable by the `python3` that runs the hooks. Pick one:
+
 ```bash
 cd claude-waypoint
-pip install --user .          # add --break-system-packages on PEP 668 distros (Debian/Ubuntu)
-# or isolated:  pipx install .
+
+# Debian/Ubuntu & other PEP 668 "externally-managed" systems (recommended).
+# Zero dependencies + --user means it only writes to ~/.local and never
+# touches apt/system packages, so --break-system-packages is safe here:
+pip install --user --break-system-packages .
+
+# — or, fully isolated (no --break-system-packages): a dedicated venv,
+#   with the command symlinked onto your PATH:
+python3 -m venv ~/.venvs/waypoint
+~/.venvs/waypoint/bin/pip install .
+ln -s ~/.venvs/waypoint/bin/waypoint ~/.local/bin/waypoint
+#   ...then point the hook commands (below) at ~/.venvs/waypoint/bin/python
+
 waypoint --help               # verify
 ```
 
-> The hooks `import` the `waypoint` package, so it must be importable by the `python3` that runs them. `pip install --user .` provides both the `waypoint` command and the import. If you use `pipx` or a venv instead, point the hook commands below at that environment's interpreter.
+> **Note on `pipx`:** `pipx install .` gives you the `waypoint` *command*, but the hooks run under the system `python3`, which can't `import waypoint` from pipx's isolated venv. For waypoint specifically, prefer `--user` or the venv above (or point the hook commands at the pipx venv's interpreter).
 
 ### Enable inside Claude Code
 

@@ -13,7 +13,7 @@ It is **forward-recovery checkpoint-restart**, not a saga: completed steps are d
 ## The idea in one picture
 
 ```
-plan (plan mode) ──/waypoint start──▶ steps seeded as pending
+plan (plan mode) ──/waypoint start──▶ steps seeded as the roadmap
    │ for each step:
    │   declare → do work → commit checkpoint (durable, fingerprinted) → advance
    ▼
@@ -92,37 +92,50 @@ In practice **Claude drives these commands for you** via the `waypoint` skill �
 | Command | What it does |
 |---|---|
 | `waypoint start --goal "<g>" [--scope <p>…] [--auto]` | Begin a tracked task; arms the tripwire. |
+| `waypoint plan --step <id> --purpose "<p>"` | Declare a planned step (the roadmap), so progress reads "step N of M". |
 | `waypoint set-step --step <id> --purpose "<p>" [--expected "<e>"] [--input <path>…]` | Declare the next step (required before editing files). |
 | `waypoint commit --summary "<s>" [--artifact <path>…] [--git]` | Mark the current step succeeded; fingerprint artifacts (and optionally git-commit them). |
-| `waypoint status` / `waypoint current` / `waypoint list` | Show the roadmap / the in-flight step / active tasks. |
+| `waypoint status` / `waypoint steps` / `waypoint list` | Show the roadmap + progress / each step by name with ✓ ▶ ☐ / active tasks **in this folder**. |
 | `waypoint resume [--id <t>]` | Re-hydrate after an interruption; integrity-checks the last step's artifacts. |
-| `waypoint check` | Verify the last step's artifacts (exit 1 if any changed/missing). |
+| `waypoint check` | Re-verify the last step's artifacts — INTACT / MISSING / CHANGED (exit 1 if any drift). |
+| `waypoint where [--id <t>]` | Print where state is stored (the `.claude/waypoint` dir and the task dir). |
 | `waypoint done` / `waypoint abandon` | Close the task; move it to `archive/`. |
+
+Every command accepts `--id <task>` to target a specific task; mutating commands (`start`, `plan`, `set-step`, `commit`) print an informative progress beat by default, and `-q`/`--quiet` collapses output to one line.
 
 ### Example: add a `/health` endpoint, resumably
 
 ```console
 $ waypoint start --goal "Add a /health endpoint with a test" --scope src tests
-2026-05-31-add-a-health-endpoint-with-a-test
+started task 2026-05-31-add-a-health-endpoint-with-a-test
+  goal: Add a /health endpoint with a test
+  state: .../.claude/waypoint/2026-05-31-add-a-health-endpoint-with-a-test
+  next: declare steps with `waypoint plan`, then `waypoint set-step`
+
+# Declare the roadmap up front, so progress reads "step N of M":
+$ waypoint plan --step api  --purpose "Add GET /health -> {status: ok}"
+planned step 'api' — 0 of 1 done — curr: step 1 (api — Add GET /health -> {status: ok})
+$ waypoint plan --step test --purpose "Test /health returns 200"
+planned step 'test' — 0 of 2 done — curr: step 1 (api — Add GET /health -> {status: ok})
 
 $ waypoint set-step --step api --purpose "Add GET /health -> {status: ok}" \
       --expected "src/app.py serves /health" --input src/app.py
-started step 'api'
+▶ started step 'api' (step 1) — Add GET /health -> {status: ok}
 
 # ...edit src/app.py... (the PreToolUse tripwire allows it — a step is declared)
 
 $ waypoint commit --summary "added /health route" --artifact src/app.py --git
-committed step 'api' (1 artifact(s)) @ 4f3a9c1
+✓ committed step 'api' — 1 of 2 done; next: step test (Test /health returns 200)  @ 4f3a9c1
 
 # Between steps, editing is blocked until you declare the next one:
 $ # (try to edit tests/test_health.py now)
 #   waypoint: no step in progress ... declare the next step before editing files
 
 $ waypoint set-step --step test --purpose "Test /health returns 200" --input tests/test_health.py
-started step 'test'
+▶ started step 'test' (step 2) — Test /health returns 200
 # ...write tests/test_health.py, run them...
 $ waypoint commit --summary "added passing test" --artifact tests/test_health.py --git
-committed step 'test' (1 artifact(s)) @ 9b2e7d4
+✓ committed step 'test' — 2 of 2 done; plan complete ✓  @ 9b2e7d4
 
 $ waypoint done
 task '2026-05-31-add-a-health-endpoint-with-a-test' completed; archived to .../archive/...

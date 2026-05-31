@@ -2,20 +2,27 @@
 
 Subcommands implement the lifecycle and the per-step checkpoint protocol:
 
-    waypoint start   --goal G [--id ID] [--scope P ...] [--auto]
-    waypoint set-step  --step b --purpose P [--target T] [--expected E]
-                       [--context C] [--input PATH ...] [--id TASK]
-    waypoint commit  --summary S [--artifact PATH ...] [--git] [--id TASK]
-    waypoint status  [--id TASK] [--json]
-    waypoint resume  [--id TASK]
-    waypoint check   [--id TASK]
-    waypoint done    [--id TASK]
-    waypoint abandon [--id TASK]
+    waypoint start    --goal G [--id ID] [--scope P ...] [--auto]
+    waypoint plan     --step b --purpose P [--id TASK]
+    waypoint set-step --step b --purpose P [--target T] [--expected E]
+                      [--context C] [--input PATH ...] [--id TASK]
+    waypoint commit   --summary S [--artifact PATH ...] [--git] [--id TASK]
+    waypoint status   [--id TASK] [--json]
+    waypoint steps    [--id TASK]
+    waypoint resume   [--id TASK]
+    waypoint check    [--id TASK]
+    waypoint where    [--id TASK]
+    waypoint done     [--id TASK]
+    waypoint abandon  [--id TASK]
     waypoint list
+
+Global: ``--root PATH`` and ``-q/--quiet`` (collapse mutating-command output
+to one line). ``list`` covers the current folder only.
 
 The state machine (§2): a step is committed only after it succeeds; at most
 one uncommitted ``current_step`` exists at a time; ``set-step`` opens it and
 ``commit`` closes it. ``resume`` re-checks the last step's artifacts (§9).
+``plan`` declares the roadmap so ``status``/``steps`` show "step N of M".
 """
 
 from __future__ import annotations

@@ -1,6 +1,6 @@
 # waypoint
 
-**Resume an interrupted multi-step task in Claude Code as if you'd just taken a coffee break — not recovered from a crash.**
+**Resume an interrupted multi-step task in Claude Code — after a crash, a token-limit stop, or a closed window — and continue forward as if you'd just taken a coffee break.**
 
 `waypoint` is a generic, file-based mechanism for Claude Code that records the state of a tracked multi-step task as it progresses, so a fresh session can pick up exactly where the last one stopped — after a close, a crash, or a token-limit interruption.
 

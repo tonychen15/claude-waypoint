@@ -14,7 +14,7 @@ We want: when a tracked task is interrupted mid-flight, a freshly started Claude
 
 ### Design goal (north star)
 
-> Resume should feel like Claude finished step b, stepped away for coffee, and came back to start step c — seamless continuation, not crash recovery.
+> Resume should feel like Claude finished step b, stepped away for coffee, and came back to start step c — seamless continuation, not a painful manual reconstruction. (Crash, token-limit, and close are all recovered; the *feel* is a coffee break, not a fire drill.)
 
 ### Non-goals (explicitly out of scope)
 

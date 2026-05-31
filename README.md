@@ -28,9 +28,66 @@ re-hydrate from the last committed step's artifacts → continue forward (coffee
 - **No silent state mutation** — paused tasks persist byte-for-byte; the system reports staleness but never auto-archives by age. You decide.
 - **Autonomous resume across a rate-limit break** (opt-in `--auto`) — a thin cron trigger relaunches the task headless, and on a usage-limit it reschedules itself to wake at the reset time. Headless runs stop at every human gate (outbound writes, ambiguous effects) rather than firing them unattended. Adapted from a proven `research.sh` orchestrator pattern.
 
+## Installation
+
+### Requirements
+
+- **Python ≥ 3.12** — standard library only, no third-party dependencies.
+- **git** — used for `git hash-object` artifact fingerprints (falls back to SHA-256 if unavailable).
+- *Optional:* `at` (or cron) for autonomous resume (`--auto`).
+
+### Install the CLI
+
+```bash
+cd claude-waypoint
+pip install --user .          # add --break-system-packages on PEP 668 distros (Debian/Ubuntu)
+# or isolated:  pipx install .
+waypoint --help               # verify
+```
+
+> The hooks `import` the `waypoint` package, so it must be importable by the `python3` that runs them. `pip install --user .` provides both the `waypoint` command and the import. If you use `pipx` or a venv instead, point the hook commands below at that environment's interpreter.
+
+### Enable inside Claude Code
+
+State always lives per-project in `.claude/waypoint/`; the *tooling* can be wired globally or per-project.
+
+**Global (recommended — available in every project):**
+
+```bash
+mkdir -p ~/.claude/hooks ~/.claude/skills/waypoint
+cp hooks/*.py               ~/.claude/hooks/
+cp skills/waypoint/SKILL.md ~/.claude/skills/waypoint/
+```
+
+Merge into `~/.claude/settings.json` (absolute paths so they resolve everywhere; swap `python3` for your venv/pipx interpreter if needed):
+
+```json
+{
+  "hooks": {
+    "SessionStart": [{ "hooks": [{ "type": "command", "command": "python3 ~/.claude/hooks/session_start.py" }] }],
+    "PreToolUse":   [{ "matcher": "Write|Edit|MultiEdit", "hooks": [{ "type": "command", "command": "python3 ~/.claude/hooks/pre_tool_use.py" }] }],
+    "PreCompact":   [{ "hooks": [{ "type": "command", "command": "python3 ~/.claude/hooks/pre_compact.py" }] }]
+  }
+}
+```
+
+**Single project:** copy `hooks/` and `skills/waypoint/` into that project's `.claude/`, then merge this repo's `.claude/settings.json` hook block (it already uses `$CLAUDE_PROJECT_DIR`).
+
+### Develop / run the tests
+
+```bash
+python3 -m venv .venv
+.venv/bin/pip install -e . pytest
+.venv/bin/python -m pytest          # 31 tests
+```
+
+### Autonomous resume (optional)
+
+Needs `at` (preferred) or cron. Start a task with `waypoint start --auto`; on a usage limit it reschedules itself to wake at the reset time (design §6A). Override the headless model with `WAYPOINT_CLAUDE_MODEL`.
+
 ## Status
 
-Design approved. Implementation not started. See [`docs/design.md`](docs/design.md).
+Implemented and tested — 31 passing tests, cross-LLM (Gemini) reviewed. See [`docs/design.md`](docs/design.md) for the full design.
 
 ## Why "waypoint"
 

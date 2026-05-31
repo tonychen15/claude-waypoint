@@ -1,0 +1,314 @@
+"""The ``waypoint`` command-line interface.
+
+Subcommands implement the lifecycle and the per-step checkpoint protocol:
+
+    waypoint start   --goal G [--id ID] [--scope P ...] [--auto]
+    waypoint set-step  --step b --purpose P [--target T] [--expected E]
+                       [--context C] [--input PATH ...] [--id TASK]
+    waypoint commit  --summary S [--artifact PATH ...] [--git] [--id TASK]
+    waypoint current [--id TASK]
+    waypoint status  [--id TASK] [--json]
+    waypoint resume  [--id TASK]
+    waypoint check   [--id TASK]
+    waypoint done    [--id TASK]
+    waypoint abandon [--id TASK]
+    waypoint list
+
+The state machine (§2): a step is committed only after it succeeds; at most
+one uncommitted ``current_step`` exists at a time; ``set-step`` opens it and
+``commit`` closes it. ``resume`` re-checks the last step's artifacts (§9).
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import re
+import subprocess
+import sys
+from typing import Optional
+
+from . import fingerprint, model, store
+
+
+def _slug(text: str) -> str:
+    s = re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
+    return (s[:40] or "task").rstrip("-")
+
+
+def _resolve(root: str, task_id: Optional[str]) -> tuple:
+    """Return ``(task_id, task)``; infer the single active task if id omitted.
+
+    Raises:
+        SystemExit: If the id is missing and the active task is ambiguous.
+    """
+    if task_id:
+        return task_id, store.load(root, task_id)
+    active = store.active_tasks(root)
+    if len(active) == 1:
+        return active[0]
+    if not active:
+        raise SystemExit("waypoint: no active task; pass --id")
+    ids = ", ".join(tid for tid, _ in active)
+    raise SystemExit(f"waypoint: multiple active tasks ({ids}); pass --id")
+
+
+def cmd_start(root: str, args) -> int:
+    task_id = args.id or f"{model.now_iso()[:10]}-{_slug(args.goal)}"
+    try:
+        store.load(root, task_id)
+        print(f"waypoint: task {task_id!r} already exists", file=sys.stderr)
+        return 1
+    except FileNotFoundError:
+        pass
+    others = store.active_tasks(root)
+    if others:
+        names = ", ".join(tid for tid, _ in others)
+        print(f"waypoint: note — other active task(s) present: {names}",
+              file=sys.stderr)
+    task = model.new_task(task_id, args.goal, scope=args.scope,
+                          owner_session=args.session or "", auto=args.auto)
+    store.save(root, task)
+    print(task_id)
+    return 0
+
+
+def cmd_set_step(root: str, args) -> int:
+    task_id, task = _resolve(root, args.id)
+    if task.get("current_step") is not None:
+        print("waypoint: a step is already in progress; commit it first "
+              f"(current: {task['current_step'].get('id')})", file=sys.stderr)
+        return 1
+    task["current_step"] = {
+        "id": args.step,
+        "purpose": args.purpose,
+        "target": args.target or "",
+        "context": args.context or "",
+        "inputs": [{"path": p} for p in (args.input or [])],
+        "expected_result": args.expected or "",
+        "status": model.STEP_IN_PROGRESS,
+    }
+    # Drop the matching pending entry, if any.
+    task["pending"] = [s for s in task.get("pending", [])
+                       if s.get("id") != args.step]
+    store.save(root, task)
+    print(f"started step {args.step!r}")
+    return 0
+
+
+def _git_commit(artifacts: list, message: str) -> Optional[str]:
+    """Stage the given artifacts and commit; return the short SHA or None."""
+    if not artifacts:
+        return None
+    try:
+        subprocess.run(["git", "add", "--", *artifacts], check=True,
+                       capture_output=True, text=True, timeout=30)
+        subprocess.run(["git", "commit", "-m", message], check=True,
+                       capture_output=True, text=True, timeout=30)
+        out = subprocess.run(["git", "rev-parse", "--short", "HEAD"],
+                             capture_output=True, text=True, timeout=10)
+        return out.stdout.strip() or None
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+
+def cmd_commit(root: str, args) -> int:
+    task_id, task = _resolve(root, args.id)
+    cur = task.get("current_step")
+    if cur is None:
+        print("waypoint: no step in progress to commit", file=sys.stderr)
+        return 1
+    artifacts = [fingerprint.fingerprint(p) for p in (args.artifact or [])]
+    step_commit = None
+    if args.git:
+        step_commit = _git_commit(
+            list(args.artifact or []),
+            f"waypoint: {task_id} step {cur.get('id')} — {args.summary or cur.get('purpose')}",
+        )
+        if step_commit:
+            for a in artifacts:
+                a["step_commit"] = step_commit
+    cur["actual_result"] = {"summary": args.summary or "", "artifacts": artifacts}
+    if step_commit:
+        cur["step_commit"] = step_commit
+    cur["status"] = model.STEP_SUCCEEDED
+    cur["completed_at"] = model.now_iso()
+    task.setdefault("steps", []).append(cur)
+    task["current_step"] = None
+    store.save(root, task)
+    print(f"committed step {cur.get('id')!r} "
+          f"({len(artifacts)} artifact(s))"
+          + (f" @ {step_commit}" if step_commit else ""))
+    return 0
+
+
+def cmd_current(root: str, args) -> int:
+    _, task = _resolve(root, args.id)
+    print(json.dumps(task.get("current_step"), indent=2, ensure_ascii=False))
+    return 0
+
+
+def cmd_status(root: str, args) -> int:
+    if args.id is None and not store.active_tasks(root):
+        print("waypoint: no active task")
+        return 0
+    _, task = _resolve(root, args.id)
+    if args.json:
+        print(json.dumps(task, indent=2, ensure_ascii=False))
+    else:
+        from . import statusmd
+        print(statusmd.render(task))
+    return 0
+
+
+def _check(task: dict) -> list:
+    """Return ``(path, verdict)`` for each artifact of the last step."""
+    step = model.last_succeeded(task)
+    if not step:
+        return []
+    results = []
+    for art in step.get("actual_result", {}).get("artifacts", []):
+        results.append((art.get("path"), fingerprint.verify(art)))
+    return results
+
+
+def cmd_check(root: str, args) -> int:
+    _, task = _resolve(root, args.id)
+    results = _check(task)
+    bad = [(p, v) for p, v in results if v != fingerprint.INTACT]
+    for path, verdict in results:
+        print(f"{verdict:8} {path}")
+    return 1 if bad else 0
+
+
+def cmd_resume(root: str, args) -> int:
+    task_id, task = _resolve(root, args.id)
+    step = model.last_succeeded(task)
+    cur = task.get("current_step")
+    print(f"# Resuming task {task_id!r}: {task.get('goal')}")
+    if step:
+        print(f"\nLast committed step: {step.get('id')} — {step.get('purpose')}")
+        print(f"  result: {step.get('actual_result', {}).get('summary', '')}")
+        results = _check(task)
+        for path, verdict in results:
+            mark = {fingerprint.INTACT: "ok",
+                    fingerprint.MISSING: "GONE",
+                    fingerprint.CHANGED: "CHANGED"}[verdict]
+            print(f"  [{mark}] {path}")
+        if any(v != fingerprint.INTACT for _, v in results):
+            print("\n⚠ Some artifacts changed or are missing — surface to the "
+                  "human before continuing (§9 go-deep).")
+    if cur:
+        print(f"\n▶ In-progress step to re-run: {cur.get('id')} — "
+              f"{cur.get('purpose')}")
+        print(f"  target: {cur.get('target', '')}")
+        print("  Re-run via observe-then-act: inspect current state, do only "
+              "what remains.")
+    else:
+        nxt = (task.get("pending") or [None])[0]
+        if nxt:
+            print(f"\nNo step in progress. Next planned: {nxt.get('id')} — "
+                  f"{nxt.get('purpose')}. Declare it with `waypoint set-step`.")
+        else:
+            print("\nNo step in progress and nothing pending.")
+    return 0
+
+
+def _close(root: str, args, status: str) -> int:
+    task_id, task = _resolve(root, args.id)
+    task["status"] = status
+    store.save(root, task)
+    dst = store.archive(root, task_id)
+    print(f"task {task_id!r} {status}; archived to {dst}")
+    return 0
+
+
+def cmd_done(root: str, args) -> int:
+    return _close(root, args, model.COMPLETED)
+
+
+def cmd_abandon(root: str, args) -> int:
+    return _close(root, args, model.ABANDONED)
+
+
+def cmd_list(root: str, args) -> int:
+    active = store.active_tasks(root)
+    if not active:
+        print("(no active tasks)")
+        return 0
+    for tid, t in active:
+        cur = t.get("current_step")
+        where = f"step {cur.get('id')}" if cur else "between steps"
+        print(f"{tid}  [{where}]  {t.get('goal')}")
+    return 0
+
+
+def build_parser() -> argparse.ArgumentParser:
+    # Shared options live on a parent parser so they are accepted *after* the
+    # subcommand name (e.g. `waypoint start --root X`), not only before it.
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument("--root", help="project root (default: auto-detect)")
+
+    p = argparse.ArgumentParser(prog="waypoint", description=__doc__,
+                                parents=[common])
+    sub = p.add_subparsers(dest="cmd", required=True)
+
+    s = sub.add_parser("start", parents=[common]); s.set_defaults(fn=cmd_start)
+    s.add_argument("--goal", required=True)
+    s.add_argument("--id")
+    s.add_argument("--scope", nargs="*")
+    s.add_argument("--session", default="")
+    s.add_argument("--auto", action="store_true")
+
+    s = sub.add_parser("set-step", parents=[common]); s.set_defaults(fn=cmd_set_step)
+    s.add_argument("--step", required=True)
+    s.add_argument("--purpose", required=True)
+    s.add_argument("--target")
+    s.add_argument("--expected")
+    s.add_argument("--context")
+    s.add_argument("--input", nargs="*")
+    s.add_argument("--id")
+
+    s = sub.add_parser("commit", parents=[common]); s.set_defaults(fn=cmd_commit)
+    s.add_argument("--summary")
+    s.add_argument("--artifact", nargs="*")
+    s.add_argument("--git", action="store_true")
+    s.add_argument("--id")
+
+    for name, fn in (("current", cmd_current), ("resume", cmd_resume),
+                     ("check", cmd_check), ("done", cmd_done),
+                     ("abandon", cmd_abandon)):
+        s = sub.add_parser(name, parents=[common]); s.set_defaults(fn=fn)
+        s.add_argument("--id")
+
+    s = sub.add_parser("status", parents=[common]); s.set_defaults(fn=cmd_status)
+    s.add_argument("--id")
+    s.add_argument("--json", action="store_true")
+
+    sub.add_parser("list", parents=[common]).set_defaults(fn=cmd_list)
+    return p
+
+
+def main(argv: Optional[list] = None) -> int:
+    """CLI entry point.
+
+    Args:
+        argv: Argument list (defaults to ``sys.argv[1:]``).
+
+    Returns:
+        Process exit code.
+    """
+    args = build_parser().parse_args(argv)
+    root = store.project_root(args.root)
+    try:
+        return args.fn(root, args)
+    except FileNotFoundError as e:
+        print(f"waypoint: not found: {e}", file=sys.stderr)
+        return 1
+    except ValueError as e:
+        print(f"waypoint: {e}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "claude-waypoint"
+version = "0.1.0"
+description = "Forward-recovery checkpoint-restart for Claude Code: resume interrupted multi-step tasks."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = []
+
+[project.scripts]
+waypoint = "waypoint.cli:main"
+
+[tool.setuptools]
+packages = ["waypoint"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

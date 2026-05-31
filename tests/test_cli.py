@@ -140,3 +140,19 @@ def test_where_errors_for_missing_task(root):
     assert cli.main(["where", "--id", "nope", "--root", root]) == 1
 
 
+def test_current_command_is_removed(root):
+    import pytest as _pytest
+    cli.main(["start", "--goal", "g", "--id", "t1", "--root", root])
+    with _pytest.raises(SystemExit):   # argparse: invalid choice
+        cli.main(["current", "--id", "t1", "--root", root])
+
+
+def test_status_shows_progress_line(root, capsys):
+    cli.main(["start", "--goal", "g", "--id", "t1", "--root", root])
+    cli.main(["plan", "--step", "a", "--purpose", "first", "--id", "t1",
+              "--root", root])
+    capsys.readouterr()
+    assert cli.main(["status", "--id", "t1", "--root", root]) == 0
+    assert "0 of 1 done" in capsys.readouterr().out
+
+

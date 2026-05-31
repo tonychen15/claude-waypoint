@@ -6,7 +6,6 @@ Subcommands implement the lifecycle and the per-step checkpoint protocol:
     waypoint set-step  --step b --purpose P [--target T] [--expected E]
                        [--context C] [--input PATH ...] [--id TASK]
     waypoint commit  --summary S [--artifact PATH ...] [--git] [--id TASK]
-    waypoint current [--id TASK]
     waypoint status  [--id TASK] [--json]
     waypoint resume  [--id TASK]
     waypoint check   [--id TASK]
@@ -153,12 +152,6 @@ def cmd_plan(root: str, args) -> int:
         print(f"planned step {args.step!r} — {progress.summary(task)}")
     else:
         print(f"planned {args.step}")
-    return 0
-
-
-def cmd_current(root: str, args) -> int:
-    _, task = _resolve(root, args.id)
-    print(json.dumps(task.get("current_step"), indent=2, ensure_ascii=False))
     return 0
 
 
@@ -354,7 +347,7 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--purpose", required=True)
     s.add_argument("--id")
 
-    for name, fn in (("current", cmd_current), ("resume", cmd_resume),
+    for name, fn in (("resume", cmd_resume),
                      ("check", cmd_check), ("done", cmd_done),
                      ("abandon", cmd_abandon), ("steps", cmd_steps),
                      ("where", cmd_where)):

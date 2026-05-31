@@ -71,6 +71,14 @@ def test_resume_reports_and_done_archives(root, capsys):
     assert store.active_tasks(root) == []
 
 
+def test_version_flag(capsys):
+    import pytest as _pytest
+    with _pytest.raises(SystemExit) as e:
+        cli.main(["--version"])
+    assert e.value.code == 0
+    assert "waypoint" in capsys.readouterr().out
+
+
 def test_infer_single_active_task(root):
     cli.main(["start", "--goal", "g", "--id", "only", "--root", root])
     # No --id: should infer the single active task.

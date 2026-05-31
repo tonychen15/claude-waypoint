@@ -1,0 +1,198 @@
+Metadata-Version: 2.4
+Name: claude-waypoint
+Version: 0.1.0
+Summary: Forward-recovery checkpoint-restart for Claude Code: resume interrupted multi-step tasks.
+License-Expression: MIT
+Project-URL: Homepage, https://github.com/tonychen15/claude-waypoint
+Project-URL: Repository, https://github.com/tonychen15/claude-waypoint
+Requires-Python: >=3.12
+Description-Content-Type: text/markdown
+License-File: LICENSE
+Dynamic: license-file
+
+# waypoint
+
+[![CI](https://github.com/tonychen15/claude-waypoint/actions/workflows/ci.yml/badge.svg)](https://github.com/tonychen15/claude-waypoint/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg)](https://www.python.org/)
+
+**Resume an interrupted multi-step task in Claude Code — after a crash, a token-limit stop, or a closed window — and continue forward as if you'd just taken a coffee break.**
+
+`waypoint` is a generic, file-based mechanism for Claude Code that records the state of a tracked multi-step task as it progresses, so a fresh session can pick up exactly where the last one stopped — after a close, a crash, or a token-limit interruption.
+
+It is **forward-recovery checkpoint-restart**, not a saga: completed steps are durable and good, and resume continues *forward* from the last good point (re-running only the interrupted step idempotently). See [the design doc](docs/design.md) for why that distinction matters.
+
+## The idea in one picture
+
+```
+plan (plan mode) ──/waypoint start──▶ steps seeded as pending
+   │ for each step:
+   │   declare → do work → commit checkpoint (durable, fingerprinted) → advance
+   ▼
+interruption (close / crash / token limit)
+   ▼
+new session ──SessionStart hook──▶ "⏸ Paused task 'X' at step c — resume?"
+   ▼ you confirm
+re-hydrate from the last committed step's artifacts → continue forward (coffee break)
+```
+
+## Core guarantees
+
+- **At most one uncommitted step at any instant** — enforced by a `PreToolUse` tripwire — so the last succeeded step is always durable *before* any new work, and a crash loses at most the in-flight step.
+- **Resume integrity** — each step's result artifacts are fingerprinted (`git hash-object`); on resume, a changed/missing file is detected and surfaced rather than silently trusted.
+- **Idempotent side effects** — outbound third-party writes (Telegram, email, POST, `git push`) use a write-ahead ledger so they are never double-fired on re-run.
+- **No silent state mutation** — paused tasks persist byte-for-byte; the system reports staleness but never auto-archives by age. You decide.
+- **Autonomous resume across a rate-limit break** (opt-in `--auto`) — a thin cron trigger relaunches the task headless, and on a usage-limit it reschedules itself to wake at the reset time. Headless runs stop at every human gate (outbound writes, ambiguous effects) rather than firing them unattended. Adapted from a proven `research.sh` orchestrator pattern.
+
+## Installation
+
+### Requirements
+
+- **Python ≥ 3.12** — standard library only, no third-party dependencies.
+- **git** — used for `git hash-object` artifact fingerprints (falls back to SHA-256 if unavailable).
+- *Optional:* `at` (or cron) for autonomous resume (`--auto`).
+
+### Install the CLI
+
+The `waypoint` command must be on your PATH **and** importable by the `python3` that runs the hooks. Pick one:
+
+```bash
+cd claude-waypoint
+
+# Debian/Ubuntu & other PEP 668 "externally-managed" systems (recommended).
+# Zero dependencies + --user means it only writes to ~/.local and never
+# touches apt/system packages, so --break-system-packages is safe here:
+pip install --user --break-system-packages .
+
+# — or, fully isolated (no --break-system-packages): a dedicated venv,
+#   with the command symlinked onto your PATH:
+python3 -m venv ~/.venvs/waypoint
+~/.venvs/waypoint/bin/pip install .
+ln -s ~/.venvs/waypoint/bin/waypoint ~/.local/bin/waypoint
+#   ...then point the hook commands (below) at ~/.venvs/waypoint/bin/python
+
+waypoint --help               # verify
+```
+
+> **Note on `pipx`:** `pipx install .` gives you the `waypoint` *command*, but the hooks run under the system `python3`, which can't `import waypoint` from pipx's isolated venv. For waypoint specifically, prefer `--user` or the venv above (or point the hook commands at the pipx venv's interpreter).
+
+### Enable inside Claude Code
+
+State always lives per-project in `.claude/waypoint/`; the *tooling* can be wired globally or per-project.
+
+**Global (recommended — available in every project):**
+
+```bash
+mkdir -p ~/.claude/hooks ~/.claude/skills/waypoint
+cp hooks/*.py               ~/.claude/hooks/
+cp skills/waypoint/SKILL.md ~/.claude/skills/waypoint/
+```
+
+Merge into `~/.claude/settings.json` (absolute paths so they resolve everywhere; swap `python3` for your venv/pipx interpreter if needed):
+
+```json
+{
+  "hooks": {
+    "SessionStart": [{ "hooks": [{ "type": "command", "command": "python3 ~/.claude/hooks/session_start.py" }] }],
+    "PreToolUse":   [{ "matcher": "Write|Edit|MultiEdit", "hooks": [{ "type": "command", "command": "python3 ~/.claude/hooks/pre_tool_use.py" }] }],
+    "PreCompact":   [{ "hooks": [{ "type": "command", "command": "python3 ~/.claude/hooks/pre_compact.py" }] }]
+  }
+}
+```
+
+**Single project:** copy `hooks/` and `skills/waypoint/` into that project's `.claude/`, then merge this repo's `.claude/settings.json` hook block (it already uses `$CLAUDE_PROJECT_DIR`).
+
+### Develop / run the tests
+
+```bash
+python3 -m venv .venv
+.venv/bin/pip install -e . pytest
+.venv/bin/python -m pytest          # 31 tests
+```
+
+### Autonomous resume (optional)
+
+Needs `at` (preferred) or cron. Start a task with `waypoint start --auto`; on a usage limit it reschedules itself to wake at the reset time (design §6A). Override the headless model with `WAYPOINT_CLAUDE_MODEL`.
+
+### Uninstall
+
+```bash
+pip uninstall claude-waypoint          # or: pipx uninstall claude-waypoint
+rm -rf ~/.claude/hooks/session_start.py ~/.claude/hooks/pre_tool_use.py \
+       ~/.claude/hooks/pre_compact.py ~/.claude/skills/waypoint
+# then remove the waypoint "hooks" block you added to ~/.claude/settings.json
+```
+
+Per-project cleanup (optional): delete `<project>/.claude/waypoint/` to drop saved task state. If you used `--auto`, remove the cron line (`crontab -e`, delete the `# waypoint-cron:` entry) and any pending one-shot jobs (`atq` / `atrm`). waypoint makes **no network requests** itself; the only outbound traffic is the optional `--auto` mode invoking `claude` (Anthropic API). It never uses `--dangerously-skip-permissions` — headless runs use a scoped tool allowlist.
+
+## Usage
+
+In practice **Claude drives these commands for you** via the `waypoint` skill — you just say "track this" and approve a plan. The commands below are what runs under the hood (and what you'd type to inspect or steer a task yourself).
+
+> **Where does this run?** `waypoint` is an ordinary terminal command — *not* a subcommand of the `claude` CLI. Inside a session, Claude Code runs it for you through its Bash tool; you can also run it yourself in any shell (e.g. `waypoint status`) to inspect or recover a task. The hooks are executed automatically by the Claude Code harness (never by hand), and `waypoint-cron.sh` runs from cron. This is why the install puts `waypoint` on your PATH and makes `waypoint` importable by the hook interpreter — see [Installation](#installation).
+
+| Command | What it does |
+|---|---|
+| `waypoint start --goal "<g>" [--scope <p>…] [--auto]` | Begin a tracked task; arms the tripwire. |
+| `waypoint set-step --step <id> --purpose "<p>" [--expected "<e>"] [--input <path>…]` | Declare the next step (required before editing files). |
+| `waypoint commit --summary "<s>" [--artifact <path>…] [--git]` | Mark the current step succeeded; fingerprint artifacts (and optionally git-commit them). |
+| `waypoint status` / `waypoint current` / `waypoint list` | Show the roadmap / the in-flight step / active tasks. |
+| `waypoint resume [--id <t>]` | Re-hydrate after an interruption; integrity-checks the last step's artifacts. |
+| `waypoint check` | Verify the last step's artifacts (exit 1 if any changed/missing). |
+| `waypoint done` / `waypoint abandon` | Close the task; move it to `archive/`. |
+
+### Example: add a `/health` endpoint, resumably
+
+```console
+$ waypoint start --goal "Add a /health endpoint with a test" --scope src tests
+2026-05-31-add-a-health-endpoint-with-a-test
+
+$ waypoint set-step --step api --purpose "Add GET /health -> {status: ok}" \
+      --expected "src/app.py serves /health" --input src/app.py
+started step 'api'
+
+# ...edit src/app.py... (the PreToolUse tripwire allows it — a step is declared)
+
+$ waypoint commit --summary "added /health route" --artifact src/app.py --git
+committed step 'api' (1 artifact(s)) @ 4f3a9c1
+
+# Between steps, editing is blocked until you declare the next one:
+$ # (try to edit tests/test_health.py now)
+#   waypoint: no step in progress ... declare the next step before editing files
+
+$ waypoint set-step --step test --purpose "Test /health returns 200" --input tests/test_health.py
+started step 'test'
+# ...write tests/test_health.py, run them...
+$ waypoint commit --summary "added passing test" --artifact tests/test_health.py --git
+committed step 'test' (1 artifact(s)) @ 9b2e7d4
+
+$ waypoint done
+task '2026-05-31-add-a-health-endpoint-with-a-test' completed; archived to .../archive/...
+```
+
+**Now suppose the session crashed right after the `api` commit.** A fresh session's SessionStart hook surfaces the task; you confirm, and:
+
+```console
+$ waypoint resume
+# Resuming task '2026-05-31-add-a-health-endpoint-with-a-test': Add a /health endpoint with a test
+
+Last committed step: api — Add GET /health -> {status: ok}
+  result: added /health route
+  [ok] src/app.py
+
+No step in progress. Next planned: test — Test /health returns 200. Declare it with `waypoint set-step`.
+```
+
+`src/app.py` verified intact, the roadmap is clear, and you continue forward from exactly where you stopped — re-running only what wasn't committed.
+
+## Status
+
+Implemented and tested — 31 passing tests, cross-LLM (Gemini) reviewed. See [`docs/design.md`](docs/design.md) for the full design.
+
+## Why "waypoint"
+
+A waypoint is a marked point on a route that you pass through and **continue forward from** — which is exactly the recovery model (forward recovery from the last good point). The Claude Code ecosystem already saturates *checkpoint / handoff / session / resume / memory*; `waypoint` is a clean, accurate lane.
+
+## License
+
+[MIT](LICENSE) © 2026 tonychen15. Free to use, modify, and distribute — including commercially. The one condition is to **keep the copyright and license notice** (which links back to this repo) in copies and substantial portions.

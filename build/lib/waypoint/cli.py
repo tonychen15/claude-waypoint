@@ -28,7 +28,7 @@ import subprocess
 import sys
 from typing import Optional
 
-from . import __version__, fingerprint, model, store
+from . import fingerprint, model, store
 
 
 def _slug(text: str) -> str:
@@ -251,10 +251,6 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = argparse.ArgumentParser(prog="waypoint", description=__doc__,
                                 parents=[common])
-    # --version fires during parsing and exits before the required-subcommand
-    # check, so `waypoint --version` works without a subcommand.
-    p.add_argument("--version", "-V", action="version",
-                   version=f"waypoint {__version__}")
     sub = p.add_subparsers(dest="cmd", required=True)
 
     s = sub.add_parser("start", parents=[common]); s.set_defaults(fn=cmd_start)

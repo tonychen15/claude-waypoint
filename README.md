@@ -85,6 +85,64 @@ python3 -m venv .venv
 
 Needs `at` (preferred) or cron. Start a task with `waypoint start --auto`; on a usage limit it reschedules itself to wake at the reset time (design §6A). Override the headless model with `WAYPOINT_CLAUDE_MODEL`.
 
+## Usage
+
+In practice **Claude drives these commands for you** via the `waypoint` skill — you just say "track this" and approve a plan. The commands below are what runs under the hood (and what you'd type to inspect or steer a task yourself).
+
+| Command | What it does |
+|---|---|
+| `waypoint start --goal "<g>" [--scope <p>…] [--auto]` | Begin a tracked task; arms the tripwire. |
+| `waypoint set-step --step <id> --purpose "<p>" [--expected "<e>"] [--input <path>…]` | Declare the next step (required before editing files). |
+| `waypoint commit --summary "<s>" [--artifact <path>…] [--git]` | Mark the current step succeeded; fingerprint artifacts (and optionally git-commit them). |
+| `waypoint status` / `waypoint current` / `waypoint list` | Show the roadmap / the in-flight step / active tasks. |
+| `waypoint resume [--id <t>]` | Re-hydrate after an interruption; integrity-checks the last step's artifacts. |
+| `waypoint check` | Verify the last step's artifacts (exit 1 if any changed/missing). |
+| `waypoint done` / `waypoint abandon` | Close the task; move it to `archive/`. |
+
+### Example: add a `/health` endpoint, resumably
+
+```console
+$ waypoint start --goal "Add a /health endpoint with a test" --scope src tests
+2026-05-31-add-a-health-endpoint-with-a-test
+
+$ waypoint set-step --step api --purpose "Add GET /health -> {status: ok}" \
+      --expected "src/app.py serves /health" --input src/app.py
+started step 'api'
+
+# ...edit src/app.py... (the PreToolUse tripwire allows it — a step is declared)
+
+$ waypoint commit --summary "added /health route" --artifact src/app.py --git
+committed step 'api' (1 artifact(s)) @ 4f3a9c1
+
+# Between steps, editing is blocked until you declare the next one:
+$ # (try to edit tests/test_health.py now)
+#   waypoint: no step in progress ... declare the next step before editing files
+
+$ waypoint set-step --step test --purpose "Test /health returns 200" --input tests/test_health.py
+started step 'test'
+# ...write tests/test_health.py, run them...
+$ waypoint commit --summary "added passing test" --artifact tests/test_health.py --git
+committed step 'test' (1 artifact(s)) @ 9b2e7d4
+
+$ waypoint done
+task '2026-05-31-add-a-health-endpoint-with-a-test' completed; archived to .../archive/...
+```
+
+**Now suppose the session crashed right after the `api` commit.** A fresh session's SessionStart hook surfaces the task; you confirm, and:
+
+```console
+$ waypoint resume
+# Resuming task '2026-05-31-add-a-health-endpoint-with-a-test': Add a /health endpoint with a test
+
+Last committed step: api — Add GET /health -> {status: ok}
+  result: added /health route
+  [ok] src/app.py
+
+No step in progress. Next planned: test — Test /health returns 200. Declare it with `waypoint set-step`.
+```
+
+`src/app.py` verified intact, the roadmap is clear, and you continue forward from exactly where you stopped — re-running only what wasn't committed.
+
 ## Status
 
 Implemented and tested — 31 passing tests, cross-LLM (Gemini) reviewed. See [`docs/design.md`](docs/design.md) for the full design.

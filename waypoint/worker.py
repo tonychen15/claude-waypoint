@@ -8,6 +8,9 @@ unit-tested without invoking ``claude``.
 
 from __future__ import annotations
 
+import os
+import sys
+
 from . import model
 
 # Deny-by-default worker posture. The allowlist enumerates what an autonomous
@@ -74,3 +77,34 @@ def seed_prompt(task: dict) -> str:
         "When every step is committed, run `waypoint done`.",
     ]
     return "\n".join(lines)
+
+
+def _hooks_dir() -> str:
+    """Absolute path to waypoint's own hook scripts (``<repo>/hooks``)."""
+    return os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "hooks")
+
+
+def _hook_entry(script: str, matcher: str | None = None) -> dict:
+    cmd = f'"{sys.executable}" "{os.path.join(_hooks_dir(), script)}"'
+    entry: dict = {"hooks": [{"type": "command", "command": cmd}]}
+    if matcher is not None:
+        entry["matcher"] = matcher
+    return entry
+
+
+def worker_settings(root: str, task_id: str) -> dict:  # noqa: ARG001
+    """Return an inline ``--settings`` dict wiring the four Phase-2 worker
+    hooks (heartbeat, notification, stop, deny-guard) by absolute path.
+
+    ``root`` and ``task_id`` are accepted for interface stability; the hook
+    scripts resolve the active task from the filesystem at runtime.
+    """
+    return {
+        "hooks": {
+            "PostToolUse": [_hook_entry("post_tool_use.py")],
+            "Notification": [_hook_entry("notification.py")],
+            "Stop": [_hook_entry("stop.py")],
+            "PreToolUse": [_hook_entry("pre_tool_use_guard.py", matcher="Bash")],
+        }
+    }

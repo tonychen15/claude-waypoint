@@ -1,5 +1,8 @@
 """Tests for pure worker-bootstrap construction."""
 
+import json
+import os
+
 from waypoint import model, worker
 
 
@@ -58,3 +61,18 @@ def test_permission_args_remote_write_grant_allows_transfer_tools():
     args = worker.permission_args(t)
     allow = args[args.index("--allowedTools") + 1]
     assert "Bash(scp*)" in allow and "Bash(rsync*)" in allow
+
+
+def _first_command(entry):
+    return entry[0]["hooks"][0]["command"].split()[-1]
+
+
+def test_worker_settings_wires_all_four_phase2_hooks(tmp_path):
+    s = worker.worker_settings(str(tmp_path), "t1")
+    hooks = s["hooks"]
+    assert set(hooks) == {"PostToolUse", "Notification", "Stop", "PreToolUse"}
+    flat = json.dumps(s)
+    for script in ("post_tool_use.py", "notification.py", "stop.py",
+                   "pre_tool_use_guard.py"):
+        assert script in flat
+    assert os.path.isabs(_first_command(hooks["Stop"]).strip('"'))

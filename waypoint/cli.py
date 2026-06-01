@@ -35,7 +35,7 @@ import subprocess
 import sys
 from typing import Optional
 
-from . import __version__, fingerprint, model, progress, statusmd, store
+from . import __version__, fingerprint, model, monitor, progress, runtime, statusmd, store
 
 
 def _slug(text: str) -> str:
@@ -343,6 +343,19 @@ def cmd_list(root: str, args) -> int:
     return 0
 
 
+def cmd_watch(root: str, args) -> int:
+    import time
+    task_id, _ = _resolve(root, args.id)
+    while True:
+        _, task = _resolve(root, task_id)   # reload each tick
+        snap = runtime.snapshot(root, task_id)
+        print(monitor.render(task, snap))
+        if args.once or task.get("status") != model.IN_PROGRESS:
+            return 0
+        print("-" * 40)
+        time.sleep(args.interval)
+
+
 def build_parser() -> argparse.ArgumentParser:
     # Shared options live on a parent parser so they are accepted *after* the
     # subcommand name (e.g. `waypoint start --root X`), not only before it.
@@ -404,6 +417,13 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--json", action="store_true")
 
     sub.add_parser("list", parents=[common]).set_defaults(fn=cmd_list)
+
+    s = sub.add_parser("watch", parents=[common]); s.set_defaults(fn=cmd_watch)
+    s.add_argument("--id")
+    s.add_argument("--once", action="store_true",
+                   help="render once and exit (no refresh loop)")
+    s.add_argument("--interval", type=float, default=3.0,
+                   help="refresh seconds when looping (default: 3)")
     return p
 
 

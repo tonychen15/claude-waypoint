@@ -244,3 +244,16 @@ def test_check_output_labels_artifacts(root, tmp_path, capsys):
     assert "INTACT" in out and str(art) in out
 
 
+def test_watch_once_renders_progress_and_liveness(root, capsys):
+    from waypoint import runtime
+    cli.main(["start", "--goal", "g", "--id", "t1", "--root", root])
+    cli.main(["plan", "--step", "a", "--purpose", "first", "--id", "t1",
+              "--root", root])
+    runtime.touch_heartbeat(root, "t1")
+    capsys.readouterr()
+    assert cli.main(["watch", "--once", "--id", "t1", "--root", root]) == 0
+    out = capsys.readouterr().out
+    assert "0 of 1 done" in out
+    assert "worker:" in out
+
+

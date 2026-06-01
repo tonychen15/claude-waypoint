@@ -100,3 +100,50 @@ def test_observe_waiting_age_from_latest_notification(tmp_path):
     runtime.append_event(root, "t1", "notification", message="waiting for input")
     obs = guard.observe(root, "t1")
     assert obs["waiting_age"] is not None and obs["waiting_age"] >= 0
+
+
+def _stub(tmp_path, body="import time\ntime.sleep(30)\n"):
+    p = tmp_path / "fakeclaude"
+    p.write_text("#!/usr/bin/env python3\n" + body)
+    p.chmod(0o755)
+    return str(p)
+
+
+def test_step_takes_over_dead_worker(tmp_path):
+    import time
+    from waypoint import launcher, model, store
+    root = str(tmp_path)
+    t = model.new_task("t1", "g")
+    t["plan"] = [{"id": "a", "purpose": "p"}]
+    store.save(root, t)
+    stub = _stub(tmp_path)
+    first = launcher.spawn(root, "t1", store.load(root, "t1"), claude_bin=stub)
+    launcher.stop(root, "t1")
+    time.sleep(0.3)
+    action = guard.step(root, "t1", config=CFG, claude_bin=stub)
+    try:
+        assert action == guard.TAKEOVER
+        assert launcher.worker_info(root, "t1")["pid"] != first["pid"]
+    finally:
+        launcher.stop(root, "t1")
+
+
+def test_step_halts_after_no_progress(tmp_path):
+    from waypoint import model, store
+    root = str(tmp_path)
+    store.save(root, model.new_task("t1", "g"))
+    import json, os
+    from waypoint import launcher, runtime
+    os.makedirs(runtime.runtime_dir(root, "t1"), exist_ok=True)
+    with open(launcher.worker_json_path(root, "t1"), "w") as fh:
+        json.dump({"pid": 2 ** 31 - 1, "session_id": "s"}, fh)
+    guard.save_state(root, "t1",
+                     {"fsm": guard.WATCHING, "no_progress": 1,
+                      "baseline_committed": 0})
+    action = guard.step(root, "t1", config=CFG, claude_bin="claude")
+    assert action == guard.HALT
+    assert guard.load_state(root, "t1")["fsm"] == guard.HALTED
+
+
+def test_notify_never_raises():
+    guard.notify("title", "body")

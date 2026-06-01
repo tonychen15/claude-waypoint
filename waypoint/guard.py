@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 from datetime import datetime
 
 from . import launcher, model, runtime, store
@@ -157,3 +158,41 @@ def observe(root: str, task_id: str) -> dict:
         "waiting_age": _waiting_age(snap["events"], snap["heartbeat_age"]),
         "committed": len(task.get("steps")) if isinstance(task.get("steps"), list) else 0,
     }
+
+
+def notify(title: str, message: str) -> None:
+    """Best-effort desktop notification + stdout. Never raises."""
+    print(f"[waypoint guard] {title}: {message}")
+    try:
+        subprocess.run(["notify-send", "--", title, message],
+                       capture_output=True, timeout=5)
+    except (OSError, subprocess.SubprocessError):
+        pass
+
+
+def step(root: str, task_id: str, *, config: dict,
+         claude_bin: str = "claude") -> str:
+    """One observe→decide→act cycle. Returns the action taken."""
+    gstate = load_state(root, task_id)
+    obs = observe(root, task_id)
+    action, new_gstate = decide(obs, gstate, config)
+    save_state(root, task_id, new_gstate)
+
+    if action == TAKEOVER:
+        info = launcher.worker_info(root, task_id)
+        session = info.get("session_id") if info else None
+        runtime.append_event(root, task_id, "takeover",
+                             reason=_trigger(obs, config),
+                             committed=obs.get("committed"))
+        launcher.stop(root, task_id)
+        launcher.spawn(root, task_id, store.load(root, task_id),
+                       claude_bin=claude_bin, resume_session=session)
+    elif action == HALT:
+        if gstate.get("fsm") != HALTED:
+            notify("task halted",
+                   f"{task_id}: no forward progress after repeated takeovers — "
+                   f"needs a human. Last worker left in place.")
+    elif action == COMPLETE:
+        if gstate.get("fsm") != DONE:
+            notify("task complete", f"{task_id} finished.")
+    return action

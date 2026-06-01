@@ -99,6 +99,7 @@ In practice **Claude drives these commands for you** via the `waypoint` skill â€
 | `waypoint resume [--id <t>]` | Re-hydrate after an interruption; integrity-checks the last step's artifacts. |
 | `waypoint check` | Re-verify the last step's artifacts â€” INTACT / MISSING / CHANGED (exit 1 if any drift). |
 | `waypoint where [--id <t>]` | Print where state is stored (the `.claude/waypoint` dir and the task dir). |
+| `waypoint watch [--id <t>] [--once] [--interval S]` | Read-only live monitor: progress + worker liveness (Phase 2 reconciler). |
 | `waypoint done` / `waypoint abandon` | Close the task; move it to `archive/`. |
 
 Every command accepts `--id <task>` to target a specific task; mutating commands (`start`, `plan`, `set-step`, `commit`) print an informative progress beat by default, and `-q`/`--quiet` collapses output to one line.

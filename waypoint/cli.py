@@ -12,12 +12,15 @@ Subcommands implement the lifecycle and the per-step checkpoint protocol:
     waypoint resume   [--id TASK]
     waypoint check    [--id TASK]
     waypoint where    [--id TASK]
+    waypoint watch    [--id TASK] [--once] [--interval S]
     waypoint done     [--id TASK]
     waypoint abandon  [--id TASK]
     waypoint list
 
 Global: ``--root PATH`` and ``-q/--quiet`` (collapse mutating-command output
-to one line). ``list`` covers the current folder only.
+to one line). ``list`` covers the current folder only. ``watch`` is a
+read-only live monitor of progress + worker liveness (Phase 2 reconciler); it
+never mutates state.
 
 The state machine (§2): a step is committed only after it succeeds; at most
 one uncommitted ``current_step`` exists at a time; ``set-step`` opens it and

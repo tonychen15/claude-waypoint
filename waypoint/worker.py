@@ -8,6 +8,42 @@ unit-tested without invoking ``claude``.
 
 from __future__ import annotations
 
+from . import model
+
+# Deny-by-default worker posture. The allowlist enumerates what an autonomous
+# worker may do; everything else is denied (``dontAsk``). The deny-guard hook
+# is defense-in-depth. These are best-effort defaults — validate against a
+# real ``claude`` run before relying on autonomy.
+_ALLOW_BASE = [
+    "Read", "Edit", "Write",
+    "Bash(waypoint*)",
+    "Bash(git add*)", "Bash(git commit*)", "Bash(git status*)",
+    "Bash(git diff*)", "Bash(git log*)", "Bash(git restore*)",
+    "Bash(ls*)", "Bash(cat*)", "Bash(grep*)", "Bash(find*)",
+    "Bash(mkdir*)", "Bash(mv*)", "Bash(cp*)", "Bash(touch*)",
+    "Bash(python*)", "Bash(python3*)", "Bash(pytest*)",
+    "Bash(npm*)", "Bash(node*)", "Bash(pip*)",
+]
+_DENY_BASE = ["Bash(rm*)", "Bash(git rm*)", "Bash(git push*)", "Bash(sudo*)"]
+_REMOTE_WRITE_TOOLS = ["Bash(scp*)", "Bash(rsync*)", "Bash(curl*)", "Bash(wget*)"]
+
+
+def permission_args(task: dict) -> list:
+    """Return the ``--permission-mode``/``--allowedTools``/``--disallowedTools``
+    argv for the worker, adjusted for the task's grants (deny-by-default)."""
+    allow = list(_ALLOW_BASE)
+    deny = list(_DENY_BASE)
+    if model.has_grant(task, model.GRANT_PUSH):
+        allow.append("Bash(git push*)")
+        deny = [d for d in deny if d != "Bash(git push*)"]
+    if model.has_grant(task, model.GRANT_REMOTE_WRITE):
+        allow.extend(_REMOTE_WRITE_TOOLS)
+    return [
+        "--permission-mode", "dontAsk",
+        "--allowedTools", " ".join(allow),
+        "--disallowedTools", " ".join(deny),
+    ]
+
 
 def seed_prompt(task: dict) -> str:
     """Return the initial prompt for the worker (adopt-plan, then execute)."""

@@ -102,6 +102,7 @@ In practice **Claude drives these commands for you** via the `waypoint` skill â€
 | `waypoint watch [--id <t>] [--once] [--interval S]` | Read-only live monitor: progress + worker liveness (Phase 2 reconciler). |
 | `waypoint run [--id <t>] [--allow push] [--no-follow]` | Spawn a headless worker for the task (Phase 2) and follow it with the monitor. Outbound ops off by default. |
 | `waypoint resume-worker [--id <t>]` | Manually kill the worker and relaunch it resuming its session (Phase 2). |
+| `waypoint guard [--id <t>]` (or `run --guard`) | Autonomous watchdog (Phase 2): auto-takeover on death/stall, progress-gated loop guard, completion/halt notification. |
 | `waypoint done` / `waypoint abandon` | Close the task; move it to `archive/`. |
 
 Every command accepts `--id <task>` to target a specific task; mutating commands (`start`, `plan`, `set-step`, `commit`) print an informative progress beat by default, and `-q`/`--quiet` collapses output to one line.

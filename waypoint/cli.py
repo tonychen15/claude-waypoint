@@ -13,8 +13,9 @@ Subcommands implement the lifecycle and the per-step checkpoint protocol:
     waypoint check    [--id TASK]
     waypoint where    [--id TASK]
     waypoint watch    [--id TASK] [--once] [--interval S]
-    waypoint run      --id TASK [--allow GRANT ...] [--no-follow]
+    waypoint run      --id TASK [--allow GRANT ...] [--guard] [--no-follow]
     waypoint resume-worker --id TASK
+    waypoint guard    --id TASK [--idle-timeout S] [--wait-timeout S] [--max-no-progress K]
     waypoint done     [--id TASK]
     waypoint abandon  [--id TASK]
     waypoint list
@@ -24,7 +25,10 @@ to one line). ``list`` covers the current folder only. ``watch`` is a
 read-only live monitor of progress + worker liveness (Phase 2 reconciler); it
 never mutates state. ``run`` spawns a headless worker for the task and follows
 it with the monitor; ``resume-worker`` kills and ``--resume``-relaunches it.
-Outbound grants are off by default (``--allow push`` etc.).
+Outbound grants are off by default (``--allow push`` etc.). ``guard`` (or
+``run --guard``) is the autonomous watchdog: it auto-takes-over a dead/stalled
+worker (kill + ``--resume``), bounded by a progress-gated loop guard, and
+notifies on completion or when it gives up.
 
 The state machine (§2): a step is committed only after it succeeds; at most
 one uncommitted ``current_step`` exists at a time; ``set-step`` opens it and

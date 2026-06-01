@@ -24,6 +24,13 @@ STEP_SUCCEEDED = "succeeded"
 EFFECT_PENDING = "pending"
 EFFECT_COMPLETED = "completed"
 
+# Outbound-operation grants (Phase 2 permission policy). Default: nothing
+# granted; the `run` authorization gate enables what a task may do.
+GRANT_PUSH = "push"
+GRANT_REMOTE_WRITE = "remote_write"
+GRANT_REMOTE_DELETE = "remote_delete"
+GRANTS = {GRANT_PUSH, GRANT_REMOTE_WRITE, GRANT_REMOTE_DELETE}
+
 _REQUIRED_TASK_KEYS = ("task_id", "goal", "status", "created_at", "steps")
 
 
@@ -73,6 +80,7 @@ def new_task(task_id: str, goal: str, *, scope: Optional[list] = None,
         "steps": [],
         "current_step": None,
         "plan": [],
+        "grants": {},
     }
 
 
@@ -112,6 +120,8 @@ def validate(task: dict) -> list:
             errors.append("current_step.status must be 'in_progress'")
     if not isinstance(task.get("plan", []), list):
         errors.append("plan must be a list")
+    if not isinstance(task.get("grants", {}), dict):
+        errors.append("grants must be a dict")
     return errors
 
 
@@ -155,6 +165,7 @@ def migrate(task: dict) -> dict:
         else:
             task["plan"] = []
     task.pop("pending", None)
+    task.setdefault("grants", {})
     return task
 
 
@@ -169,3 +180,18 @@ def last_succeeded(task: dict) -> Optional[dict]:
     """
     steps = task.get("steps") or []
     return steps[-1] if steps else None
+
+
+def set_grant(task: dict, name: str, value: bool = True) -> None:
+    """Grant (or revoke) an outbound operation for a task."""
+    if not isinstance(task.get("grants"), dict):
+        task["grants"] = {}
+    task["grants"][name] = bool(value)
+
+
+def has_grant(task: dict, name: str) -> bool:
+    """True if ``name`` is granted for this task."""
+    grants = task.get("grants")
+    if not isinstance(grants, dict):
+        return False
+    return bool(grants.get(name, False))

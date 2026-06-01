@@ -124,3 +124,53 @@ def test_worker_hooks_never_raise_on_garbage(root, monkeypatch):
         mod = _load(name)
         monkeypatch.setattr("sys.stdin", __import__("io").StringIO("not json"))
         assert mod.main() == 0
+
+
+def test_guard_blocks_local_delete(root, monkeypatch):
+    from waypoint import model, store
+    store.save(root, model.new_task("t1", "g"))
+    mod = _load("pre_tool_use_guard")
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", root)
+    rc = _run(mod, {"tool_name": "Bash",
+                    "tool_input": {"command": "rm -rf build"},
+                    "cwd": root}, monkeypatch)
+    assert rc == 2
+
+
+def test_guard_blocks_ungranted_push_and_records_needs_auth(root, monkeypatch):
+    from waypoint import model, runtime, store
+    store.save(root, model.new_task("t1", "g"))
+    mod = _load("pre_tool_use_guard")
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", root)
+    rc = _run(mod, {"tool_name": "Bash",
+                    "tool_input": {"command": "git push origin main"},
+                    "cwd": root}, monkeypatch)
+    assert rc == 2
+    evs = runtime.read_events(root, "t1")
+    assert evs and evs[-1]["kind"] == "needs-auth" and evs[-1]["op"] == "push"
+
+
+def test_guard_allows_granted_push(root, monkeypatch):
+    from waypoint import model, store
+    t = model.new_task("t1", "g")
+    model.set_grant(t, model.GRANT_PUSH)
+    store.save(root, t)
+    mod = _load("pre_tool_use_guard")
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", root)
+    rc = _run(mod, {"tool_name": "Bash",
+                    "tool_input": {"command": "git push"},
+                    "cwd": root}, monkeypatch)
+    assert rc == 0
+
+
+def test_guard_allows_safe_bash_and_non_bash(root, monkeypatch):
+    from waypoint import model, store
+    store.save(root, model.new_task("t1", "g"))
+    mod = _load("pre_tool_use_guard")
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", root)
+    assert _run(mod, {"tool_name": "Bash",
+                      "tool_input": {"command": "ls -la"}, "cwd": root},
+                monkeypatch) == 0
+    assert _run(mod, {"tool_name": "Edit",
+                      "tool_input": {"file_path": "x"}, "cwd": root},
+                monkeypatch) == 0

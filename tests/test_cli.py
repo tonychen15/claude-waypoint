@@ -321,3 +321,17 @@ def test_run_with_guard_spawns_and_returns(root, tmp_path):
         assert guard.load_state(root, "t1")["fsm"] == guard.WATCHING
     finally:
         launcher.stop(root, "t1")
+
+
+def test_start_persists_review_policy(root):
+    cli.main(["start", "--goal", "g", "--id", "t1", "--review", "manual",
+              "--reviewer", "gemini", "--max-retries", "3", "--root", root])
+    t = store.load(root, "t1")
+    assert t["review"] == "manual" and t["reviewer"] == "gemini"
+    assert t["max_retries"] == 3
+
+
+def test_start_review_defaults(root):
+    cli.main(["start", "--goal", "g", "--id", "t2", "--root", root])
+    t = store.load(root, "t2")
+    assert t["review"] == "auto" and t["max_retries"] == 2

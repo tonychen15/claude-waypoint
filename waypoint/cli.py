@@ -88,7 +88,9 @@ def cmd_start(root: str, args) -> int:
         print(f"waypoint: note — other active task(s) present: {names}",
               file=sys.stderr)
     task = model.new_task(task_id, args.goal, scope=args.scope,
-                          owner_session=args.session or "", auto=args.auto)
+                          owner_session=args.session or "", auto=args.auto,
+                          review=args.review, reviewer=args.reviewer,
+                          max_retries=args.max_retries)
     store.save(root, task)
     if args.quiet:
         print(task_id)
@@ -449,6 +451,12 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--scope", nargs="*")
     s.add_argument("--session", default="")
     s.add_argument("--auto", action="store_true")
+    s.add_argument("--review", choices=["auto", "manual"], default="auto",
+                   help="per-step verification: auto (orchestrator/reviewer) or manual (you)")
+    s.add_argument("--reviewer", default="",
+                   help="name/command of a configured reviewer (e.g. gemini); empty = none")
+    s.add_argument("--max-retries", type=int, default=2,
+                   help="per-step worker retries before escalating (default 2)")
 
     s = sub.add_parser("set-step", parents=[common]); s.set_defaults(fn=cmd_set_step)
     s.add_argument("--step", required=True)

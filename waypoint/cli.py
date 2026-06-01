@@ -30,6 +30,10 @@ Outbound grants are off by default (``--allow push`` etc.). ``guard`` (or
 worker (kill + ``--resume``), bounded by a progress-gated loop guard, and
 notifies on completion or when it gives up.
 
+The primary way to RUN a project is the ``/waypoint`` skill (the in-session
+agent orchestrates subagents per step); ``run``/``guard`` are the headless
+fallback for when no live session is available.
+
 The state machine (§2): a step is committed only after it succeeds; at most
 one uncommitted ``current_step`` exists at a time; ``set-step`` opens it and
 ``commit`` closes it. ``resume`` re-checks the last step's artifacts (§9).

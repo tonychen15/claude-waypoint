@@ -85,7 +85,23 @@ Per-project cleanup (optional): delete `<project>/.claude/waypoint/` to drop sav
 
 ## Usage
 
-In practice **Claude drives these commands for you** via the `waypoint` skill — you just say "track this" and approve a plan. The commands below are what runs under the hood (and what you'd type to inspect or steer a task yourself).
+### Run a project (the simple way)
+
+Three commands and a notification — the agent does the rest:
+
+```console
+$ waypoint start "Build a CLI todo app with tests"   # you approve the plan once
+… the in-session agent decomposes the goal, runs each step via subagents,
+  and checkpoints verified work …
+$ waypoint status      # glance anytime
+$ waypoint resume      # after a new session, continue from the last commit
+# …and the in-session agent pings you "✅ done" when the task completes
+```
+
+That's the whole human surface. Everything below is the machinery the agent
+drives for you (and a headless fallback) — you don't normally type it.
+
+In practice **Claude drives these commands for you** via the `waypoint` skill — the in-session agent orchestrates subagents per step and commits durable checkpoints. The commands below are what runs under the hood (and what you'd type to inspect or steer a task yourself).
 
 > **Where does this run?** `waypoint` is an ordinary terminal command — *not* a subcommand of the `claude` CLI. Inside a session, Claude Code runs it for you through its Bash tool; you can also run it yourself in any shell (e.g. `waypoint status`) to inspect or recover a task. The hooks are executed automatically by the Claude Code harness (never by hand), and `waypoint-cron.sh` runs from cron. This is why the install puts `waypoint` on your PATH and makes `waypoint` importable by the hook interpreter — see [Installation](#installation).
 
@@ -103,6 +119,11 @@ In practice **Claude drives these commands for you** via the `waypoint` skill �
 | `waypoint run [--id <t>] [--allow push] [--no-follow]` | Spawn a headless worker for the task (Phase 2) and follow it with the monitor. Outbound ops off by default. |
 | `waypoint resume-worker [--id <t>]` | Manually kill the worker and relaunch it resuming its session (Phase 2). |
 | `waypoint guard [--id <t>]` (or `run --guard`) | Autonomous watchdog (Phase 2): auto-takeover on death/stall, progress-gated loop guard, completion/halt notification. |
+
+> **Advanced — headless mode.** When there's no live Claude session to host the
+> orchestrator (cron, CI, rate-limit auto-resume), `waypoint run --id <t> --guard`
+> spawns a worker *subprocess* supervised by a watchdog instead of the in-session
+> agent + subagents. Prefer the skill (above) whenever a session is available.
 | `waypoint done` / `waypoint abandon` | Close the task; move it to `archive/`. |
 
 Every command accepts `--id <task>` to target a specific task; mutating commands (`start`, `plan`, `set-step`, `commit`) print an informative progress beat by default, and `-q`/`--quiet` collapses output to one line.

@@ -304,3 +304,20 @@ def test_resume_worker_stops_old_and_spawns_resume(root, tmp_path):
         assert second["session_id"] == first["session_id"]  # same session resumed
     finally:
         launcher.stop(root, "t1")
+
+
+def test_run_with_guard_spawns_and_returns(root, tmp_path):
+    from waypoint import launcher, guard
+    stub = tmp_path / "fakeclaude"
+    stub.write_text("#!/usr/bin/env python3\nimport time\ntime.sleep(30)\n")
+    stub.chmod(0o755)
+    cli.main(["start", "--goal", "g", "--id", "t1", "--root", root])
+    cli.main(["plan", "--step", "a", "--purpose", "p", "--id", "t1", "--root", root])
+    rc = cli.main(["run", "--id", "t1", "--guard", "--no-follow",
+                   "--claude-bin", str(stub), "--root", root])
+    try:
+        assert rc == 0
+        assert launcher.worker_info(root, "t1")["pid"]
+        assert guard.load_state(root, "t1")["fsm"] == guard.WATCHING
+    finally:
+        launcher.stop(root, "t1")

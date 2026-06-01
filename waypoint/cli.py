@@ -42,7 +42,7 @@ import subprocess
 import sys
 from typing import Optional
 
-from . import __version__, fingerprint, launcher, model, monitor, progress, runtime, statusmd, store
+from . import __version__, fingerprint, guard, launcher, model, monitor, progress, runtime, statusmd, store
 
 
 def _slug(text: str) -> str:
@@ -375,8 +375,28 @@ def cmd_resume_worker(root: str, args) -> int:
     return 0
 
 
+def cmd_guard(root: str, args) -> int:
+    import time
+    task_id, _ = _resolve(root, args.id)
+    config = {"idle_timeout": args.idle_timeout, "wait_timeout": args.wait_timeout,
+              "max_no_progress": args.max_no_progress}
+    guard.save_state(root, task_id, guard.load_state(root, task_id))
+    while True:
+        action = guard.step(root, task_id, config=config,
+                            claude_bin=args.claude_bin)
+        if action in (guard.HALT, guard.COMPLETE):
+            return 0
+        _, task = _resolve(root, task_id)
+        print(monitor.render(task, runtime.snapshot(root, task_id)))
+        if args.once:
+            return 0
+        print("-" * 40)
+        time.sleep(args.interval)
+
+
 def cmd_run(root: str, args) -> int:
     task_id, task = _resolve(root, args.id)
+    args.id = task_id  # normalise so delegated commands (cmd_guard/cmd_watch) use the resolved id
     if task.get("status") != model.IN_PROGRESS:
         print(f"waypoint: task {task_id!r} is not in_progress "
               f"(status: {task.get('status')!r})", file=sys.stderr)
@@ -394,8 +414,12 @@ def cmd_run(root: str, args) -> int:
     store.save(root, task)
     info = launcher.spawn(root, task_id, task, claude_bin=args.claude_bin)
     print(f"worker started — pid {info['pid']}, session {info['session_id']}")
+    if getattr(args, "guard", False):
+        guard.save_state(root, task_id, guard.load_state(root, task_id))
     if args.no_follow:
         return 0
+    if getattr(args, "guard", False):
+        return cmd_guard(root, args)
     return cmd_watch(root, args)
 
 
@@ -484,6 +508,20 @@ def build_parser() -> argparse.ArgumentParser:
                    help="worker binary (default: claude; override for testing)")
     s.add_argument("--once", action="store_true", help=argparse.SUPPRESS)
     s.add_argument("--interval", type=float, default=3.0, help=argparse.SUPPRESS)
+    s.add_argument("--guard", action="store_true",
+                   help="follow with the autonomous guard (auto-takeover) instead of read-only watch")
+    s.add_argument("--idle-timeout", type=float, default=guard.DEFAULTS["idle_timeout"])
+    s.add_argument("--wait-timeout", type=float, default=guard.DEFAULTS["wait_timeout"])
+    s.add_argument("--max-no-progress", type=int, default=guard.DEFAULTS["max_no_progress"])
+
+    s = sub.add_parser("guard", parents=[common]); s.set_defaults(fn=cmd_guard)
+    s.add_argument("--id")
+    s.add_argument("--claude-bin", default="claude")
+    s.add_argument("--once", action="store_true")
+    s.add_argument("--interval", type=float, default=3.0)
+    s.add_argument("--idle-timeout", type=float, default=guard.DEFAULTS["idle_timeout"])
+    s.add_argument("--wait-timeout", type=float, default=guard.DEFAULTS["wait_timeout"])
+    s.add_argument("--max-no-progress", type=int, default=guard.DEFAULTS["max_no_progress"])
 
     return p
 

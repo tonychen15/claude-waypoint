@@ -76,3 +76,29 @@ def test_worker_settings_wires_all_four_phase2_hooks(tmp_path):
                    "pre_tool_use_guard.py"):
         assert script in flat
     assert os.path.isabs(_first_command(hooks["Stop"]).strip('"'))
+
+
+def test_build_command_assembles_headless_worker(tmp_path):
+    t = _task()
+    argv = worker.build_command(str(tmp_path), t["task_id"], t)
+    assert argv[0] == "claude"
+    assert "-p" in argv
+    assert "--permission-mode" in argv and "dontAsk" in argv
+    assert "--settings" in argv
+    assert "waypoint set-step" in argv[-1]   # seed prompt is the last positional
+    assert "--resume" not in argv
+
+
+def test_build_command_with_resume_and_custom_bin(tmp_path):
+    t = _task()
+    argv = worker.build_command(str(tmp_path), t["task_id"], t,
+                                resume_session="sess-123", claude_bin="/x/fake")
+    assert argv[0] == "/x/fake"
+    assert argv[argv.index("--resume") + 1] == "sess-123"
+
+
+def test_build_command_settings_is_valid_json(tmp_path):
+    t = _task()
+    argv = worker.build_command(str(tmp_path), t["task_id"], t)
+    settings = json.loads(argv[argv.index("--settings") + 1])
+    assert "hooks" in settings

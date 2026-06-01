@@ -65,3 +65,38 @@ def test_terminal_states_are_sticky():
     for fsm, act in ((guard.HALTED, guard.HALT), (guard.DONE, guard.COMPLETE)):
         action, new = guard.decide(_obs(alive=False), _g(fsm=fsm), CFG)
         assert action == act and new["fsm"] == fsm
+
+
+def test_state_roundtrip_defaults(tmp_path):
+    root = str(tmp_path)
+    from waypoint import model, store
+    store.save(root, model.new_task("t1", "g"))
+    g = guard.load_state(root, "t1")
+    assert g["fsm"] == guard.WATCHING and g["no_progress"] == 0
+    g["no_progress"] = 2
+    guard.save_state(root, "t1", g)
+    assert guard.load_state(root, "t1")["no_progress"] == 2
+
+
+def test_observe_reports_dead_worker(tmp_path):
+    root = str(tmp_path)
+    from waypoint import model, store
+    store.save(root, model.new_task("t1", "g"))
+    from waypoint import launcher, runtime
+    import json, os
+    os.makedirs(runtime.runtime_dir(root, "t1"), exist_ok=True)
+    with open(launcher.worker_json_path(root, "t1"), "w") as fh:
+        json.dump({"pid": 2 ** 31 - 1, "session_id": "s"}, fh)
+    obs = guard.observe(root, "t1")
+    assert obs["alive"] is False
+    assert obs["task_status"] == "in_progress"
+    assert obs["committed"] == 0
+
+
+def test_observe_waiting_age_from_latest_notification(tmp_path):
+    root = str(tmp_path)
+    from waypoint import model, runtime, store
+    store.save(root, model.new_task("t1", "g"))
+    runtime.append_event(root, "t1", "notification", message="waiting for input")
+    obs = guard.observe(root, "t1")
+    assert obs["waiting_age"] is not None and obs["waiting_age"] >= 0

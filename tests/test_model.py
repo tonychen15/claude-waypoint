@@ -131,3 +131,32 @@ def test_validate_rejects_non_dict_grants():
     t = model.new_task("t1", "g")
     t["grants"] = ["push"]
     assert any("grants" in e for e in model.validate(t))
+
+
+def test_new_task_review_defaults():
+    t = model.new_task("t1", "g")
+    assert t["review"] == "auto"
+    assert t["reviewer"] == ""
+    assert t["max_retries"] == 2
+
+
+def test_new_task_review_overrides():
+    t = model.new_task("t1", "g", review="manual", reviewer="gemini",
+                       max_retries=3)
+    assert t["review"] == "manual" and t["reviewer"] == "gemini"
+    assert t["max_retries"] == 3
+
+
+def test_migrate_adds_review_defaults():
+    legacy = {"task_id": "t", "goal": "g", "status": "in_progress",
+              "created_at": "2026-01-01T00:00:00+00:00", "steps": [],
+              "current_step": None, "plan": []}
+    model.migrate(legacy)
+    assert legacy["review"] == "auto"
+    assert legacy["reviewer"] == "" and legacy["max_retries"] == 2
+
+
+def test_validate_rejects_bad_review_mode():
+    t = model.new_task("t1", "g")
+    t["review"] = "sometimes"
+    assert any("review" in e for e in model.validate(t))

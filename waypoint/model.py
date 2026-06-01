@@ -32,6 +32,11 @@ GRANT_PUSH = "push"
 GRANT_REMOTE_WRITE = "remote_write"
 GRANTS = {GRANT_PUSH, GRANT_REMOTE_WRITE}
 
+# Orchestration policy (Phase 3, intra-Claude skill).
+REVIEW_AUTO = "auto"
+REVIEW_MANUAL = "manual"
+REVIEW_MODES = {REVIEW_AUTO, REVIEW_MANUAL}
+
 _REQUIRED_TASK_KEYS = ("task_id", "goal", "status", "created_at", "steps")
 
 
@@ -52,6 +57,7 @@ def now_iso(clock: Optional[datetime] = None) -> str:
 
 def new_task(task_id: str, goal: str, *, scope: Optional[list] = None,
              owner_session: str = "", auto: bool = False,
+             review: str = "auto", reviewer: str = "", max_retries: int = 2,
              clock: Optional[datetime] = None) -> dict:
     """Build a fresh task dict with no steps and no current step.
 
@@ -61,6 +67,9 @@ def new_task(task_id: str, goal: str, *, scope: Optional[list] = None,
         scope: Declared folders/files for overlap detection (§8).
         owner_session: Adopting session id.
         auto: Whether autonomous cron resume is enabled (§6A).
+        review: Orchestration review mode (``"auto"`` or ``"manual"``).
+        reviewer: Name of the reviewing entity when mode is ``"manual"``.
+        max_retries: Maximum retry attempts for orchestration policy.
         clock: Optional fixed datetime (for tests).
 
     Returns:
@@ -82,6 +91,9 @@ def new_task(task_id: str, goal: str, *, scope: Optional[list] = None,
         "current_step": None,
         "plan": [],
         "grants": {},
+        "review": review,
+        "reviewer": reviewer,
+        "max_retries": int(max_retries),
     }
 
 
@@ -123,6 +135,12 @@ def validate(task: dict) -> list:
         errors.append("plan must be a list")
     if not isinstance(task.get("grants", {}), dict):
         errors.append("grants must be a dict")
+    if task.get("review", REVIEW_AUTO) not in REVIEW_MODES:
+        errors.append(f"invalid review mode: {task.get('review')!r}")
+    if not isinstance(task.get("reviewer", ""), str):
+        errors.append("reviewer must be a str")
+    if not isinstance(task.get("max_retries", 0), int):
+        errors.append("max_retries must be an int")
     return errors
 
 
@@ -167,6 +185,9 @@ def migrate(task: dict) -> dict:
             task["plan"] = []
     task.pop("pending", None)
     task.setdefault("grants", {})
+    task.setdefault("review", REVIEW_AUTO)
+    task.setdefault("reviewer", "")
+    task.setdefault("max_retries", 2)
     return task
 
 

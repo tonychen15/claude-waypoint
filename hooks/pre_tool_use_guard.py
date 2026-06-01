@@ -46,7 +46,7 @@ def main() -> int:
     cmd = (data.get("tool_input") or {}).get("command") or ""
     try:
         root = store.project_root(data.get("cwd"))
-        active = store.active_tasks(root)
+        tids = runtime.scoped_task_ids(root)
     except Exception:
         return 0
 
@@ -56,11 +56,17 @@ def main() -> int:
             "to-be-deleted/ instead of deleting it.\n")
         return 2
 
+    def _has_grant(tid, grant):
+        try:
+            return model.has_grant(store.load(root, tid), grant)
+        except Exception:
+            return False
+
     for op, rx, grant in _REMOTE:
         if rx.search(cmd):
-            if any(model.has_grant(t, grant) for _, t in active):
+            if any(_has_grant(tid, grant) for tid in tids):
                 return 0
-            for tid, _ in active:
+            for tid in tids:
                 try:
                     runtime.append_event(root, tid, "needs-auth",
                                          op=op, command=cmd)

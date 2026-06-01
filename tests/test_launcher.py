@@ -63,3 +63,17 @@ def test_spawn_fresh_passes_session_id_to_argv(tmp_path, monkeypatch):
 
 def test_worker_info_none_when_absent(tmp_path):
     assert launcher.worker_info(str(tmp_path), "t1") is None
+
+
+def test_spawn_sets_task_id_env(tmp_path, monkeypatch):
+    root = str(tmp_path)
+    store.save(root, model.new_task("t1", "g"))
+    out = tmp_path / "env.txt"
+    monkeypatch.setenv("ENV_OUT", str(out))
+    stub = _stub(tmp_path, "fakeclaude",
+                 "import os\nopen(os.environ['ENV_OUT'],'w').write("
+                 "os.environ.get('WAYPOINT_TASK_ID',''))\n")
+    launcher.spawn(root, "t1", store.load(root, "t1"), claude_bin=stub)
+    import time
+    time.sleep(0.3)
+    assert out.read_text() == "t1"

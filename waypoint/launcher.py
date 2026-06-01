@@ -55,9 +55,10 @@ def spawn(root: str, task_id: str, task: dict, *, claude_bin: str = "claude",
     rdir = runtime.runtime_dir(root, task_id)
     os.makedirs(rdir, exist_ok=True)
     log_path = os.path.join(rdir, "worker.log")
+    env = {**os.environ, "WAYPOINT_TASK_ID": task_id}
     with open(log_path, "ab") as logf:
         proc = subprocess.Popen(argv, stdout=logf, stderr=subprocess.STDOUT,
-                                cwd=root, start_new_session=True)
+                                cwd=root, start_new_session=True, env=env)
     info = {"pid": proc.pid, "session_id": session_id,
             "started_at": model.now_iso(), "log": log_path,
             "resumed": bool(resume_session)}

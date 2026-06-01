@@ -24,7 +24,7 @@ def main() -> int:
         data = {}
     try:
         root = store.project_root(data.get("cwd"))
-        for tid, _ in store.active_tasks(root):
+        for tid in runtime.scoped_task_ids(root):
             runtime.touch_heartbeat(root, tid)
     except Exception:
         return 0

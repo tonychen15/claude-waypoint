@@ -174,3 +174,29 @@ def test_guard_allows_safe_bash_and_non_bash(root, monkeypatch):
     assert _run(mod, {"tool_name": "Edit",
                       "tool_input": {"file_path": "x"}, "cwd": root},
                 monkeypatch) == 0
+
+
+def test_post_tool_use_scopes_to_env_task(root, monkeypatch):
+    from waypoint import model, runtime, store
+    store.save(root, model.new_task("a", "g"))
+    store.save(root, model.new_task("b", "g"))
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", root)
+    monkeypatch.setenv("WAYPOINT_TASK_ID", "a")
+    mod = _load("post_tool_use")
+    _run(mod, {"tool_name": "Edit", "cwd": root}, monkeypatch)
+    assert runtime.heartbeat_age(root, "a") is not None
+    assert runtime.heartbeat_age(root, "b") is None     # NOT contaminated
+
+
+def test_guard_grant_scoped_to_env_task(root, monkeypatch):
+    # task 'b' has push granted; the worker is task 'a' (ungranted) -> still blocked
+    from waypoint import model, store
+    store.save(root, model.new_task("a", "g"))
+    tb = model.new_task("b", "g"); model.set_grant(tb, model.GRANT_PUSH)
+    store.save(root, tb)
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", root)
+    monkeypatch.setenv("WAYPOINT_TASK_ID", "a")
+    mod = _load("pre_tool_use_guard")
+    rc = _run(mod, {"tool_name": "Bash",
+                    "tool_input": {"command": "git push"}, "cwd": root}, monkeypatch)
+    assert rc == 2      # ungranted for task 'a' despite 'b' having the grant

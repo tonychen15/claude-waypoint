@@ -84,3 +84,14 @@ def snapshot(root: str, task_id: str, *, events_limit: int = 5) -> dict:
         "heartbeat_age": heartbeat_age(root, task_id),
         "events": read_events(root, task_id, limit=events_limit),
     }
+
+
+def scoped_task_ids(root: str) -> list:
+    """Task id(s) a worker hook should act on: the worker's own task
+    (``$WAYPOINT_TASK_ID``, set by the launcher) if present, else every active
+    task (single-session fallback). Scoping prevents one worker's signals from
+    contaminating another task's liveness or grants."""
+    scoped = os.environ.get("WAYPOINT_TASK_ID")
+    if scoped:
+        return [scoped]
+    return [tid for tid, _ in store.active_tasks(root)]

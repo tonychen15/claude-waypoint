@@ -72,3 +72,14 @@ def test_corrupt_events_line_is_skipped(tmp_path):
     runtime.append_event(root, "t1", "notification")
     kinds = [e["kind"] for e in runtime.read_events(root, "t1")]
     assert kinds == ["turn_done", "notification"]   # bad line skipped
+
+
+def test_scoped_task_ids_prefers_env(tmp_path, monkeypatch):
+    root = str(tmp_path)
+    from waypoint import model, store
+    store.save(root, model.new_task("a", "g"))
+    store.save(root, model.new_task("b", "g"))
+    monkeypatch.delenv("WAYPOINT_TASK_ID", raising=False)
+    assert set(runtime.scoped_task_ids(root)) == {"a", "b"}   # fallback: all active
+    monkeypatch.setenv("WAYPOINT_TASK_ID", "a")
+    assert runtime.scoped_task_ids(root) == ["a"]             # scoped to the worker's task

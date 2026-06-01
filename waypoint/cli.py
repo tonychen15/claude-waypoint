@@ -38,7 +38,7 @@ import subprocess
 import sys
 from typing import Optional
 
-from . import __version__, fingerprint, model, monitor, progress, runtime, statusmd, store
+from . import __version__, fingerprint, launcher, model, monitor, progress, runtime, statusmd, store
 
 
 def _slug(text: str) -> str:
@@ -359,6 +359,30 @@ def cmd_watch(root: str, args) -> int:
         time.sleep(args.interval)
 
 
+def cmd_run(root: str, args) -> int:
+    task_id, task = _resolve(root, args.id)
+    if task.get("status") != model.IN_PROGRESS:
+        print(f"waypoint: task {task_id!r} is not in_progress "
+              f"(status: {task.get('status')!r})", file=sys.stderr)
+        return 1
+    if not task.get("plan"):
+        print("waypoint: declare a plan first (`waypoint plan ...`) before "
+              "run", file=sys.stderr)
+        return 1
+    for g in (args.allow or []):
+        if g not in model.GRANTS:
+            print(f"waypoint: unknown grant {g!r} (choices: "
+                  f"{', '.join(sorted(model.GRANTS))})", file=sys.stderr)
+            return 1
+        model.set_grant(task, g)
+    store.save(root, task)
+    info = launcher.spawn(root, task_id, task, claude_bin=args.claude_bin)
+    print(f"worker started — pid {info['pid']}, session {info['session_id']}")
+    if args.no_follow:
+        return 0
+    return cmd_watch(root, args)
+
+
 def build_parser() -> argparse.ArgumentParser:
     # Shared options live on a parent parser so they are accepted *after* the
     # subcommand name (e.g. `waypoint start --root X`), not only before it.
@@ -427,6 +451,19 @@ def build_parser() -> argparse.ArgumentParser:
                    help="render once and exit (no refresh loop)")
     s.add_argument("--interval", type=float, default=3.0,
                    help="refresh seconds when looping (default: 3)")
+
+    s = sub.add_parser("run", parents=[common]); s.set_defaults(fn=cmd_run)
+    s.add_argument("--id")
+    s.add_argument("--allow", action="append",
+                   help="grant an outbound op (push|remote_write|remote_delete); "
+                        "repeatable; grants are persisted to task state")
+    s.add_argument("--no-follow", action="store_true",
+                   help="spawn the worker and return (do not follow with the monitor)")
+    s.add_argument("--claude-bin", default="claude",
+                   help="worker binary (default: claude; override for testing)")
+    s.add_argument("--once", action="store_true", help=argparse.SUPPRESS)
+    s.add_argument("--interval", type=float, default=3.0, help=argparse.SUPPRESS)
+
     return p
 
 

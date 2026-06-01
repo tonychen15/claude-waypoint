@@ -257,3 +257,29 @@ def test_watch_once_renders_progress_and_liveness(root, capsys):
     assert "worker:" in out
 
 
+def test_run_spawns_worker_with_grants(root, capsys, tmp_path):
+    import time
+    from waypoint import launcher
+    stub = tmp_path / "fakeclaude"
+    stub.write_text("#!/usr/bin/env python3\nimport time\ntime.sleep(30)\n")
+    stub.chmod(0o755)
+    cli.main(["start", "--goal", "g", "--id", "t1", "--root", root])
+    cli.main(["plan", "--step", "a", "--purpose", "first", "--id", "t1",
+              "--root", root])
+    rc = cli.main(["run", "--id", "t1", "--no-follow", "--allow", "push",
+                   "--claude-bin", str(stub), "--root", root])
+    try:
+        assert rc == 0
+        from waypoint import model, store
+        assert model.has_grant(store.load(root, "t1"), "push") is True
+        info = launcher.worker_info(root, "t1")
+        assert info and info["pid"]
+    finally:
+        launcher.stop(root, "t1")
+
+
+def test_run_requires_a_plan(root):
+    cli.main(["start", "--goal", "g", "--id", "t1", "--root", root])
+    assert cli.main(["run", "--id", "t1", "--no-follow", "--root", root]) == 1
+
+

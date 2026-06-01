@@ -289,6 +289,35 @@ re-designed (e.g., heartbeat-only if `--resume` is unreliable → brief-only).
 
 Each slice is independently shippable; the user can stop after any slice.
 
+## Build refinements (2026-06-01, post-spike)
+
+Verified against `claude` 2.1.159 + the local environment; these refine the
+*initial* build without changing the north star:
+
+- **tmux is not installed here → headless-first.** The worker runs as a
+  **background `claude -p` process** (stream-json output to a log); **pane A is
+  the single terminal** running the guard/watch display. The two visible tmux
+  panes (and pane B's interactive escape-hatch) are **deferred to a later
+  slice**, behind a small launcher seam so adding tmux later doesn't churn the
+  guard. The watchdog, liveness, resume, permission, and completion logic are
+  identical either way (they speak through the waypoint folder).
+- **Soft plan-mode.** `--permission-mode plan` is read-only and would block
+  autonomous edits, so the worker runs with an **autonomous posture**
+  (`acceptEdits` or `dontAsk` + allowlist) and the **seed prompt** carries the
+  plan-mode intent: *first restate/adopt the declared `plan` roadmap and
+  reconcile reality via `check`, then execute the steps, checkpointing via
+  waypoint.* No literal plan-mode turn.
+- **Confirmed flags for the worker bootstrap:** positional `[prompt]` seeds an
+  invocation; `--permission-mode {plan,acceptEdits,dontAsk}`; `--settings
+  <file-or-json>` injects **session-scoped worker hooks** (PostToolUse /
+  Notification / Stop / a PreToolUse deny-guard) without touching the project's
+  `.claude/settings.json`; `--allowedTools`/`--disallowedTools`,
+  `--append-system-prompt`, `--add-dir`, `--session-id`, `--resume`.
+- **Testing the worker safely:** never launch real `claude` in tests. Unit-test
+  the bootstrap as **pure command/settings/prompt construction**; integration-
+  test `run`/guard/resume against a **fake worker stub** (a small script that
+  touches heartbeat / commits a step / exits / hangs on cue).
+
 ## Open risks
 
 - **False-positive takeover** killing a long-thinking worker — mitigated by

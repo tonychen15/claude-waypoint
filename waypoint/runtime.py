@@ -47,3 +47,40 @@ def heartbeat_age(root: str, task_id: str) -> Optional[float]:
         return max(0.0, time.time() - os.path.getmtime(path))
     except OSError:
         return None
+
+
+def append_event(root: str, task_id: str, kind: str, **fields) -> None:
+    """Append a ``{ts, kind, **fields}`` JSON line to events.jsonl."""
+    d = _ensure(root, task_id)
+    rec = {"ts": model.now_iso(), "kind": kind}
+    rec.update(fields)
+    line = json.dumps(rec, ensure_ascii=False) + "\n"
+    with open(os.path.join(d, EVENTS_FILE), "a", encoding="utf-8") as fh:
+        fh.write(line)
+
+
+def read_events(root: str, task_id: str, limit: int = 20) -> list:
+    """Return up to the last ``limit`` events (malformed lines skipped)."""
+    path = os.path.join(runtime_dir(root, task_id), EVENTS_FILE)
+    out: list = []
+    try:
+        with open(path, encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    out.append(json.loads(line))
+                except json.JSONDecodeError:
+                    continue
+    except OSError:
+        return []
+    return out[-limit:]
+
+
+def snapshot(root: str, task_id: str, *, events_limit: int = 5) -> dict:
+    """A point-in-time liveness snapshot for rendering."""
+    return {
+        "heartbeat_age": heartbeat_age(root, task_id),
+        "events": read_events(root, task_id, limit=events_limit),
+    }

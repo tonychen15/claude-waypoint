@@ -86,3 +86,41 @@ def test_sessionstart_silent_when_no_task(root, monkeypatch, capsys):
     mod = _load("session_start")
     assert _run(mod, {"cwd": root, "source": "startup"}, monkeypatch) == 0
     assert capsys.readouterr().out.strip() == ""
+
+
+def test_post_tool_use_touches_heartbeat(root, monkeypatch):
+    from waypoint import model, runtime, store
+    store.save(root, model.new_task("t1", "g"))
+    mod = _load("post_tool_use")
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", root)
+    assert _run(mod, {"tool_name": "Edit", "cwd": root}, monkeypatch) == 0
+    assert runtime.heartbeat_age(root, "t1") is not None
+
+
+def test_notification_records_event(root, monkeypatch):
+    from waypoint import model, runtime, store
+    store.save(root, model.new_task("t1", "g"))
+    mod = _load("notification")
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", root)
+    _run(mod, {"message": "waiting for your input", "cwd": root}, monkeypatch)
+    evs = runtime.read_events(root, "t1")
+    assert evs and evs[-1]["kind"] == "notification"
+    assert "waiting" in evs[-1]["message"]
+
+
+def test_stop_records_turn_done(root, monkeypatch):
+    from waypoint import model, runtime, store
+    store.save(root, model.new_task("t1", "g"))
+    mod = _load("stop")
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", root)
+    _run(mod, {"cwd": root}, monkeypatch)
+    evs = runtime.read_events(root, "t1")
+    assert evs and evs[-1]["kind"] == "turn_done"
+
+
+def test_worker_hooks_never_raise_on_garbage(root, monkeypatch):
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", root)
+    for name in ("post_tool_use", "notification", "stop"):
+        mod = _load(name)
+        monkeypatch.setattr("sys.stdin", __import__("io").StringIO("not json"))
+        assert mod.main() == 0

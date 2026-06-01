@@ -113,16 +113,20 @@ def worker_settings(root: str, task_id: str) -> dict:  # noqa: ARG001
 
 def build_command(root: str, task_id: str, task: dict, *,
                   resume_session: str | None = None,
+                  session_id: str | None = None,
                   claude_bin: str = "claude") -> list:
     """Assemble the full headless-worker ``claude`` argv (launches nothing).
 
     Headless (``-p``) autonomous run: permission posture + the session hooks +
     the project dir + the seed prompt. With ``resume_session`` it resumes that
-    session id; otherwise a fresh run.
+    session id; otherwise a fresh run, with ``--session-id`` if ``session_id``
+    is given.
     """
     argv = [claude_bin, "-p"]
     if resume_session:
         argv += ["--resume", resume_session]
+    elif session_id:
+        argv += ["--session-id", session_id]
     argv += permission_args(task)
     argv += ["--settings", json.dumps(worker_settings(root, task_id))]
     argv += ["--add-dir", root]

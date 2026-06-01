@@ -102,3 +102,19 @@ def test_build_command_settings_is_valid_json(tmp_path):
     argv = worker.build_command(str(tmp_path), t["task_id"], t)
     settings = json.loads(argv[argv.index("--settings") + 1])
     assert "hooks" in settings
+
+
+def test_build_command_fresh_uses_session_id(tmp_path):
+    t = _task()
+    argv = worker.build_command(str(tmp_path), t["task_id"], t,
+                                session_id="sess-abc")
+    assert argv[argv.index("--session-id") + 1] == "sess-abc"
+    assert "--resume" not in argv
+
+
+def test_build_command_resume_takes_precedence_over_session_id(tmp_path):
+    t = _task()
+    argv = worker.build_command(str(tmp_path), t["task_id"], t,
+                                resume_session="r1", session_id="s1")
+    assert argv[argv.index("--resume") + 1] == "r1"
+    assert "--session-id" not in argv

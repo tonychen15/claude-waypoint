@@ -184,9 +184,14 @@ def step(root: str, task_id: str, *, config: dict,
         runtime.append_event(root, task_id, "takeover",
                              reason=_trigger(obs, config),
                              committed=obs.get("committed"))
-        launcher.stop(root, task_id)
-        launcher.spawn(root, task_id, store.load(root, task_id),
-                       claude_bin=claude_bin, resume_session=session)
+        try:
+            launcher.stop(root, task_id)
+            launcher.spawn(root, task_id, store.load(root, task_id),
+                           claude_bin=claude_bin, resume_session=session)
+        except Exception as exc:   # never let a relaunch error crash the loop
+            notify("takeover failed",
+                   f"{task_id}: could not relaunch the worker ({exc}). Will "
+                   f"retry next tick; surface to a human if it persists.")
     elif action == HALT:
         if gstate.get("fsm") != HALTED:
             notify("task halted",

@@ -147,3 +147,21 @@ def test_step_halts_after_no_progress(tmp_path):
 
 def test_notify_never_raises():
     guard.notify("title", "body")
+
+
+def test_step_takeover_survives_spawn_failure(tmp_path, monkeypatch):
+    # A relaunch error must not crash the guard loop.
+    import json, os
+    from waypoint import launcher, model, runtime, store
+    root = str(tmp_path)
+    store.save(root, model.new_task("t1", "g"))
+    os.makedirs(runtime.runtime_dir(root, "t1"), exist_ok=True)
+    with open(launcher.worker_json_path(root, "t1"), "w") as fh:
+        json.dump({"pid": 2 ** 31 - 1, "session_id": "s"}, fh)
+
+    def boom(*a, **k):
+        raise RuntimeError("spawn failed")
+
+    monkeypatch.setattr("waypoint.guard.launcher.spawn", boom)
+    action = guard.step(root, "t1", config=CFG, claude_bin="claude")
+    assert action == guard.TAKEOVER          # handled, did not raise

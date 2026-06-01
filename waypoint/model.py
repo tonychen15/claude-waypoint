@@ -25,11 +25,12 @@ EFFECT_PENDING = "pending"
 EFFECT_COMPLETED = "completed"
 
 # Outbound-operation grants (Phase 2 permission policy). Default: nothing
-# granted; the `run` authorization gate enables what a task may do.
+# granted; the `run` authorization gate enables what a task may do. Remote
+# deletes are intentionally not grantable — they stay unconditionally blocked
+# by the worker's deny-by-default posture.
 GRANT_PUSH = "push"
 GRANT_REMOTE_WRITE = "remote_write"
-GRANT_REMOTE_DELETE = "remote_delete"
-GRANTS = {GRANT_PUSH, GRANT_REMOTE_WRITE, GRANT_REMOTE_DELETE}
+GRANTS = {GRANT_PUSH, GRANT_REMOTE_WRITE}
 
 _REQUIRED_TASK_KEYS = ("task_id", "goal", "status", "created_at", "steps")
 

@@ -504,7 +504,7 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("run", parents=[common]); s.set_defaults(fn=cmd_run)
     s.add_argument("--id")
     s.add_argument("--allow", action="append",
-                   help="grant an outbound op (push|remote_write|remote_delete); "
+                   help="grant an outbound op (push|remote_write); "
                         "repeatable; grants are persisted to task state")
     s.add_argument("--no-follow", action="store_true",
                    help="spawn the worker and return (do not follow with the monitor)")

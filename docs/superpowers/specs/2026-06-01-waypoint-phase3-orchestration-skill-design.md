@@ -242,3 +242,36 @@ migration pattern). No change to the step/plan structures.
   STATUS + plan rather than relying on in-context memory.
 - **Two paths to maintain** (skill + headless) — bounded by keeping the headless
   path explicitly secondary and sharing the same on-disk state.
+
+## Acceptance (dogfood)
+
+Ran the recipe end-to-end as the orchestrator on a throwaway 2-step task
+(`/tmp/wp-dogfood.*`), dispatching real worker subagents per step.
+
+**Evidence of each guarantee:**
+- **Plan-approval gate:** the recipe stops to show the plan and wait for one
+  approval (narrated in the run; it is step 2 of the loop).
+- **Orchestrator → subagent → verify → commit loop:** two steps, each done by a
+  real worker subagent (haiku), verified by the orchestrator, then
+  `waypoint commit` — durable, git-anchored checkpoints (`@8b2fa35`, `@46b4831`).
+- **Completion:** `waypoint done` archived the task `completed` (2/2 steps); the
+  orchestrator emitted a one-line "✅ … done (2 steps)".
+- **Resume (forward-recovery):** a second task with step 1 committed →
+  `waypoint resume` reports "Next planned: two" and `waypoint steps` shows
+  `✓ one / ☐ two` — a fresh session continues from the last commit.
+- **Failure path:** a worker dispatched an impossible step returned a clean
+  **BLOCKED** synchronously to the orchestrator (which would retry up to
+  `max_retries`, then escalate).
+
+**Rough edges found (fixed / noted):**
+1. The orchestrator's self-verify must use the project's **own** test runner —
+   a bare `python3` lacked `pytest`, the check errored, and the step was
+   committed anyway (violating "commit only verified work"). **Fixed** by
+   sharpening the SKILL verify rule: use the project's interpreter/venv, and an
+   inconclusive verify counts as a failure (no commit).
+2. (Headless path, separate) after `waypoint done` archives a task, a trailing
+   PostToolUse hook can recreate an empty `runtime/heartbeat` for the archived
+   id — harmless, to tidy later.
+
+**Verdict:** the intra-Claude orchestration recipe works as designed; the core
+loop and resume are sound.

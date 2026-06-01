@@ -57,7 +57,10 @@ uncommitted step. You never compensate/rollback.
       - else `reviewer` set (or the project declares one, e.g. a Gemini/codex
         cross-LLM protocol in CLAUDE.md) → run that reviewer on the changes.
       - else → **verify yourself**: run the project's tests / read the diff
-        against the step's stated goal.
+        against the step's stated goal. Use the project's **own** test runner /
+        interpreter (e.g. its venv), not a bare `python3`. If you cannot run
+        the check or it is inconclusive, treat the step as a **failure**
+        (retry/escalate) — never commit unverified work.
    4. **Pass → commit** (durable checkpoint):
       ```
       waypoint commit --summary "<what was produced>" [--artifact <path> ... --git]

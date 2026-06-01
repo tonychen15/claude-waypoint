@@ -359,6 +359,18 @@ def cmd_watch(root: str, args) -> int:
         time.sleep(args.interval)
 
 
+def cmd_resume_worker(root: str, args) -> int:
+    task_id, task = _resolve(root, args.id)
+    info = launcher.worker_info(root, task_id)
+    session = info.get("session_id") if info else None
+    launcher.stop(root, task_id)
+    new = launcher.spawn(root, task_id, task, claude_bin=args.claude_bin,
+                         resume_session=session)
+    print(f"resumed worker — pid {new['pid']}, session {new['session_id']}"
+          + ("" if session else " (fresh; no prior session)"))
+    return 0
+
+
 def cmd_run(root: str, args) -> int:
     task_id, task = _resolve(root, args.id)
     if task.get("status") != model.IN_PROGRESS:
@@ -451,6 +463,11 @@ def build_parser() -> argparse.ArgumentParser:
                    help="render once and exit (no refresh loop)")
     s.add_argument("--interval", type=float, default=3.0,
                    help="refresh seconds when looping (default: 3)")
+
+    s = sub.add_parser("resume-worker", parents=[common])
+    s.set_defaults(fn=cmd_resume_worker)
+    s.add_argument("--id")
+    s.add_argument("--claude-bin", default="claude")
 
     s = sub.add_parser("run", parents=[common]); s.set_defaults(fn=cmd_run)
     s.add_argument("--id")

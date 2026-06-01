@@ -283,3 +283,24 @@ def test_run_requires_a_plan(root):
     assert cli.main(["run", "--id", "t1", "--no-follow", "--root", root]) == 1
 
 
+def test_resume_worker_stops_old_and_spawns_resume(root, tmp_path):
+    import time
+    from waypoint import launcher, store
+    stub = tmp_path / "fakeclaude"
+    stub.write_text("#!/usr/bin/env python3\nimport time\ntime.sleep(30)\n")
+    stub.chmod(0o755)
+    cli.main(["start", "--goal", "g", "--id", "t1", "--root", root])
+    cli.main(["plan", "--step", "a", "--purpose", "p", "--id", "t1", "--root", root])
+    cli.main(["run", "--id", "t1", "--no-follow", "--claude-bin", str(stub),
+              "--root", root])
+    first = launcher.worker_info(root, "t1")
+    rc = cli.main(["resume-worker", "--id", "t1", "--claude-bin", str(stub),
+                   "--root", root])
+    try:
+        assert rc == 0
+        second = launcher.worker_info(root, "t1")
+        assert second["pid"] != first["pid"]
+        assert second["resumed"] is True
+        assert second["session_id"] == first["session_id"]  # same session resumed
+    finally:
+        launcher.stop(root, "t1")

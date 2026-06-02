@@ -24,6 +24,25 @@ new session ──SessionStart hook──▶ "⏸ Paused task 'X' at step c — 
 re-hydrate from the last committed step's artifacts → continue forward (coffee break)
 ```
 
+## Quickstart
+
+**Run a project, resumably — three commands and a notification.** (Install once first — see [Installation](#installation).) Inside a Claude Code session, in your git project, **invoke the skill** — say it in words or use the slash form:
+
+> `/waypoint build a CLI todo app with add/list/done and tests`
+
+The in-session agent decomposes the goal, **shows you the plan and waits for one OK**, then runs each step via a worker subagent, verifies it, and commits a durable checkpoint. When it finishes, it pings you **"✅ done."**
+
+```console
+/waypoint <goal>     # start + run it (you approve the plan once)
+waypoint status      # where am I? — goal, "step 3 of 5", current step
+waypoint steps       # the step list: ✓ done · ▶ current · ☐ pending
+waypoint resume      # in a new session, continue from the last commit
+```
+
+That's the whole human surface — the agent runs `plan`/`set-step`/`commit` for you. Optional knobs: `--review manual` (you approve each step's diff), `--reviewer <name>` (a configured reviewer checks each step), `--max-retries K`. For a worked step-by-step example see [Usage](#usage); for the no-live-session case see the *Advanced — headless mode* note there.
+
+> **Trigger the skill, not the bare command.** `/waypoint <goal>` (or "use waypoint to build X") makes the agent orchestrate; typing `!waypoint start "…"` only creates the task record without running it.
+
 ## Core guarantees
 
 - **At most one uncommitted step at any instant** — enforced by a `PreToolUse` tripwire — so the last succeeded step is always durable *before* any new work, and a crash loses at most the in-flight step.

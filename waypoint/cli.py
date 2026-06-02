@@ -1,8 +1,13 @@
 """The ``waypoint`` command-line interface.
 
-Subcommands implement the lifecycle and the per-step checkpoint protocol:
+The primary way to RUN a project is the ``/waypoint`` skill — the in-session
+agent decomposes the goal and dispatches subagents per step, checkpointing via
+these verbs. The CLI is that skill's durable backend (and a headless fallback).
 
-    waypoint start    --goal G [--id ID] [--scope P ...] [--auto]
+Primary (checkpoint protocol — the skill drives these):
+
+    waypoint start    --goal G [--id ID] [--scope P ...]
+                      [--review auto|manual] [--reviewer R] [--max-retries K] [--auto]
     waypoint plan     --step b --purpose P [--id TASK]
     waypoint set-step --step b --purpose P [--target T] [--expected E]
                       [--context C] [--input PATH ...] [--id TASK]
@@ -12,13 +17,16 @@ Subcommands implement the lifecycle and the per-step checkpoint protocol:
     waypoint resume   [--id TASK]
     waypoint check    [--id TASK]
     waypoint where    [--id TASK]
-    waypoint watch    [--id TASK] [--once] [--interval S]
-    waypoint run      --id TASK [--allow GRANT ...] [--guard] [--no-follow]
-    waypoint resume-worker --id TASK
-    waypoint guard    --id TASK [--idle-timeout S] [--wait-timeout S] [--max-no-progress K]
     waypoint done     [--id TASK]
     waypoint abandon  [--id TASK]
     waypoint list
+
+Advanced (headless — only when no live session hosts the skill: cron/CI):
+
+    waypoint watch         [--id TASK] [--once] [--interval S]
+    waypoint run           --id TASK [--allow GRANT ...] [--guard] [--no-follow]
+    waypoint resume-worker --id TASK
+    waypoint guard         --id TASK [--idle-timeout S] [--wait-timeout S] [--max-no-progress K]
 
 Global: ``--root PATH`` and ``-q/--quiet`` (collapse mutating-command output
 to one line). ``list`` covers the current folder only. ``watch`` is a
@@ -29,10 +37,6 @@ Outbound grants are off by default (``--allow push`` etc.). ``guard`` (or
 ``run --guard``) is the autonomous watchdog: it auto-takes-over a dead/stalled
 worker (kill + ``--resume``), bounded by a progress-gated loop guard, and
 notifies on completion or when it gives up.
-
-The primary way to RUN a project is the ``/waypoint`` skill (the in-session
-agent orchestrates subagents per step); ``run``/``guard`` are the headless
-fallback for when no live session is available.
 
 The state machine (§2): a step is committed only after it succeeds; at most
 one uncommitted ``current_step`` exists at a time; ``set-step`` opens it and
@@ -501,19 +505,24 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("list", parents=[common]).set_defaults(fn=cmd_list)
 
-    s = sub.add_parser("watch", parents=[common]); s.set_defaults(fn=cmd_watch)
+    s = sub.add_parser("watch", parents=[common],
+                       help="(headless) read-only live monitor of a worker")
+    s.set_defaults(fn=cmd_watch)
     s.add_argument("--id")
     s.add_argument("--once", action="store_true",
                    help="render once and exit (no refresh loop)")
     s.add_argument("--interval", type=float, default=3.0,
                    help="refresh seconds when looping (default: 3)")
 
-    s = sub.add_parser("resume-worker", parents=[common])
+    s = sub.add_parser("resume-worker", parents=[common],
+                       help="(headless) kill + --resume the worker subprocess")
     s.set_defaults(fn=cmd_resume_worker)
     s.add_argument("--id")
     s.add_argument("--claude-bin", default="claude")
 
-    s = sub.add_parser("run", parents=[common]); s.set_defaults(fn=cmd_run)
+    s = sub.add_parser("run", parents=[common],
+                       help="(headless) spawn a worker subprocess for the task")
+    s.set_defaults(fn=cmd_run)
     s.add_argument("--id")
     s.add_argument("--allow", action="append",
                    help="grant an outbound op (push|remote_write); "
@@ -530,7 +539,9 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--wait-timeout", type=float, default=guard.DEFAULTS["wait_timeout"])
     s.add_argument("--max-no-progress", type=int, default=guard.DEFAULTS["max_no_progress"])
 
-    s = sub.add_parser("guard", parents=[common]); s.set_defaults(fn=cmd_guard)
+    s = sub.add_parser("guard", parents=[common],
+                       help="(headless) autonomous watchdog over a worker")
+    s.set_defaults(fn=cmd_guard)
     s.add_argument("--id")
     s.add_argument("--claude-bin", default="claude")
     s.add_argument("--once", action="store_true")

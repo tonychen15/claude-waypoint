@@ -1,4 +1,8 @@
-"""Autonomous guard for the Phase 2 reconciler.
+"""Autonomous guard for the headless worker — EDGE-CASE path.
+
+Not the primary way to run a project: that is the ``/waypoint`` skill (the
+in-session agent supervises subagents inline, so it needs no separate
+watchdog). This guard exists only for the headless fallback (no live session).
 
 The decision logic (``decide``) is pure and table-tested: it implements the
 watchdog FSM, the three takeover triggers (death / waiting-timeout /

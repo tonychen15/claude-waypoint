@@ -1,8 +1,14 @@
-"""Worker process side-effects (Phase 2): spawn, stop, and the worker.json
-record. Pure command construction lives in ``worker.py``; the liveness store
-in ``runtime.py``. ``run``, ``resume-worker``, and (later) the guard share
-this one spawn/stop implementation so there is a single way to start/kill a
-worker.
+"""HEADLESS / EDGE-CASE path — not the primary way to run a project.
+
+The primary path is the ``/waypoint`` skill: the in-session Claude agent
+orchestrates subagents per step. This module powers the headless fallback,
+used only when there is **no live session** to host that agent (cron, CI,
+rate-limit auto-resume).
+
+Worker process side-effects: spawn, stop, and the worker.json record. Pure
+command construction lives in ``worker.py``; the liveness store in
+``runtime.py``. ``run``, ``resume-worker``, and the guard share this one
+spawn/stop implementation so there is a single way to start/kill a worker.
 """
 
 from __future__ import annotations

@@ -1,9 +1,13 @@
-"""Worker bootstrap construction (pure) for the Phase 2 reconciler.
+"""Headless-worker bootstrap construction (pure) — EDGE-CASE path.
 
-Builds the inputs a background ``claude`` worker is launched with. This slice
-provides the seed prompt; the permission posture and the subprocess launcher
-are later slices. Pure functions of task state — they launch nothing and are
-unit-tested without invoking ``claude``.
+Not the primary way to run a project: that is the ``/waypoint`` skill (the
+in-session agent dispatches subagents directly). This builds the launch inputs
+for the headless ``claude`` subprocess used only when no live session is
+available.
+
+Builds the seed prompt + the permission posture + the launch argv. Pure
+functions of task state — they launch nothing and are unit-tested without
+invoking ``claude``.
 """
 
 from __future__ import annotations

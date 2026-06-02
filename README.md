@@ -49,6 +49,7 @@ That's the whole human surface — the agent runs `plan`/`set-step`/`commit` for
 - **Resume integrity** — each step's result artifacts are fingerprinted (`git hash-object`); on resume, a changed/missing file is detected and surfaced rather than silently trusted.
 - **Idempotent side effects** — outbound third-party writes (Telegram, email, POST, `git push`) use a write-ahead ledger so they are never double-fired on re-run.
 - **No silent state mutation** — paused tasks persist byte-for-byte; the system reports staleness but never auto-archives by age. You decide.
+- **Human-input steps are never auto-completed** — a step whose done-condition is a human answer (decision gate, interactive login/OTP, approval) is marked `--awaits-human`; `commit` refuses to close it without `--human-ack`, so "presented the choice / printed a login prompt" can never be mistaken for "done" while you're still deciding.
 - **Autonomous resume across a rate-limit break** (opt-in `--auto`) — a thin cron trigger relaunches the task headless, and on a usage-limit it reschedules itself to wake at the reset time. Headless runs stop at every human gate (outbound writes, ambiguous effects) rather than firing them unattended. Adapted from a proven `research.sh` orchestrator pattern.
 
 ## Installation
@@ -128,8 +129,8 @@ In practice **Claude drives these commands for you** via the `waypoint` skill �
 |---|---|
 | `waypoint start --goal "<g>" [--scope <p>…] [--auto]` | Begin a tracked task; arms the tripwire. |
 | `waypoint plan --step <id> --purpose "<p>"` | Declare a planned step (the roadmap), so progress reads "step N of M". |
-| `waypoint set-step --step <id> --purpose "<p>" [--expected "<e>"] [--input <path>…]` | Declare the next step (required before editing files). |
-| `waypoint commit --summary "<s>" [--artifact <path>…] [--git]` | Mark the current step succeeded; fingerprint artifacts (and optionally git-commit them). |
+| `waypoint set-step --step <id> --purpose "<p>" [--expected "<e>"] [--input <path>…] [--awaits-human]` | Declare the next step (required before editing files). `--awaits-human` marks a step whose done-condition is a human answer (decision gate, login/OTP, approval). |
+| `waypoint commit --summary "<s>" [--artifact <path>…] [--git] [--human-ack "<answer>"]` | Mark the current step succeeded; fingerprint artifacts (and optionally git-commit them). An `--awaits-human` step refuses to commit without `--human-ack` (the human's real answer, recorded as the step result). |
 | `waypoint status` / `waypoint steps` / `waypoint list` | Show the roadmap + progress / each step by name with ✓ ▶ ☐ / active tasks **in this folder**. |
 | `waypoint resume [--id <t>]` | Re-hydrate after an interruption; integrity-checks the last step's artifacts. |
 | `waypoint check` | Re-verify the last step's artifacts — INTACT / MISSING / CHANGED (exit 1 if any drift). |
@@ -202,7 +203,7 @@ No step in progress. Next planned: test — Test /health returns 200. Declare it
 
 ## Status
 
-Implemented and tested — 31 passing tests, cross-LLM (Gemini) reviewed. See [`docs/design.md`](docs/design.md) for the full design.
+Implemented and tested — 135 passing tests, cross-LLM (Gemini) reviewed. See [`docs/design.md`](docs/design.md) for the full design.
 
 ## Why "waypoint"
 

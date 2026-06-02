@@ -46,12 +46,20 @@ uncommitted step. You never compensate/rollback.
 3. **Execute each pending step** (drive the loop off `waypoint steps`):
    1. `waypoint set-step --step <id> --purpose "<what>" [--expected "<done looks like>"]`
       — this arms the tripwire (undeclared edits are blocked), so always
-      set-step before any work.
+      set-step before any work. **If the step's done-condition is a *human*
+      answer** — a decision/approval gate, an interactive login / OTP / browser
+      auth, "ask the user X" — add `--awaits-human`. That marks it a human gate:
+      `commit` will refuse to close it until you pass the human's real answer
+      back via `--human-ack` (see 3.4). Presenting a choice or printing a login
+      URL is **not** "done"; the human responding is.
    2. **Dispatch a worker subagent** (Task tool) with: the step's goal, the
       context it needs, and the instruction *"do the work; DO NOT run any
       `waypoint` command — the orchestrator owns checkpoints."* Workers cannot
       spawn their own workers; if a step is too big, split it into more
-      `waypoint plan` steps instead.
+      `waypoint plan` steps instead. **A subagent has no channel to the human**,
+      so never delegate a human-gate step to one — it can only "present" or
+      "await", never *receive* the answer, and you'd mistake its return for
+      completion. Handle human-gate steps yourself (3.4).
    3. **Verify** (highest applicable wins):
       - `review == manual` → show the diff + a summary and **wait for the human**.
       - else `reviewer` set (or the project declares one, e.g. a Gemini/codex
@@ -64,6 +72,13 @@ uncommitted step. You never compensate/rollback.
    4. **Pass → commit** (durable checkpoint):
       ```
       waypoint commit --summary "<what was produced>" [--artifact <path> ... --git]
+      ```
+      **Human gate** (`--awaits-human` step): do **not** self-verify or commit.
+      **Stop the loop, surface the choice/prompt to the human, and wait for
+      their actual reply** — however long that takes (a slow human is not a
+      finished step). Only once they answer:
+      ```
+      waypoint commit --summary "<what the human decided>" --human-ack "<their answer>"
       ```
       **Fail** (worker BLOCKED, or review rejects) → re-dispatch a fresh worker
       with the failure as context, up to `max_retries`. If it still fails,
@@ -93,6 +108,9 @@ human to say resume** (they run `waypoint resume`). Then:
   succeeded — never commit an unverified or failing step.
 - **One uncommitted step at a time.** Commit (or leave open + escalate) before
   the next.
+- **A step that needs a human answer is never "done" until the human answers.**
+  Mark it `--awaits-human` and hold the loop open for the real reply; never let
+  a worker's "presented / awaiting user" return be read as completion.
 - **Outbound third-party writes** (email, POST, `git push`, deploy) are a
   **human gate** unless explicitly granted — don't fire them unattended.
 - **Keep checkpoints small:** summary + artifact *pointers*, not file contents.

@@ -335,3 +335,39 @@ def test_start_review_defaults(root):
     cli.main(["start", "--goal", "g", "--id", "t2", "--root", root])
     t = store.load(root, "t2")
     assert t["review"] == "auto" and t["max_retries"] == 2
+
+
+def test_set_step_records_awaits_human_flag(root):
+    cli.main(["start", "--goal", "g", "--id", "t1", "--root", root])
+    assert cli.main(["set-step", "--step", "a", "--purpose", "ask user",
+                     "--awaits-human", "--id", "t1", "--root", root]) == 0
+    assert store.load(root, "t1")["current_step"]["awaits_human"] is True
+
+
+def test_commit_blocks_human_gate_without_ack(root, capsys):
+    # A step that awaits a human answer must NOT be committable until the
+    # human actually responds — the orchestrator cannot self-verify it done.
+    cli.main(["start", "--goal", "g", "--id", "t1", "--root", root])
+    cli.main(["set-step", "--step", "a", "--purpose", "decision gate",
+              "--awaits-human", "--id", "t1", "--root", root])
+    capsys.readouterr()
+    rc = cli.main(["commit", "--summary", "presented the decision; awaiting user",
+                   "--id", "t1", "--root", root])
+    assert rc == 1
+    assert "human" in capsys.readouterr().err.lower()
+    # The step stays open (not deemed done).
+    t = store.load(root, "t1")
+    assert t["current_step"] is not None and t["steps"] == []
+
+
+def test_commit_human_gate_with_ack_records_response(root):
+    cli.main(["start", "--goal", "g", "--id", "t1", "--root", root])
+    cli.main(["set-step", "--step", "a", "--purpose", "decision gate",
+              "--awaits-human", "--id", "t1", "--root", root])
+    rc = cli.main(["commit", "--summary", "user chose interview prep",
+                   "--human-ack", "proceed to interview prep", "--id", "t1",
+                   "--root", root])
+    assert rc == 0
+    step = store.load(root, "t1")["steps"][0]
+    assert step["status"] == model.STEP_SUCCEEDED
+    assert step["actual_result"]["human_response"] == "proceed to interview prep"

@@ -125,6 +125,15 @@ def validate(task: dict) -> list:
                 errors.append(
                     f"committed step[{i}] {step.get('id')!r} is not 'succeeded'"
                 )
+            # A human-gate step is "done" only once the human actually answered.
+            if step.get("awaits_human") and not (
+                isinstance(step.get("actual_result"), dict)
+                and step["actual_result"].get("human_response")
+            ):
+                errors.append(
+                    f"committed step[{i}] {step.get('id')!r} awaits a human "
+                    f"answer but records no human response"
+                )
     cur = task.get("current_step")
     if cur is not None:
         if not isinstance(cur, dict):

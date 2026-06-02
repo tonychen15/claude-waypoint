@@ -39,6 +39,19 @@ def test_validate_current_step_must_be_in_progress():
     assert any("current_step.status" in e for e in model.validate(t))
 
 
+def test_validate_committed_human_gate_needs_human_response():
+    # A committed human-gate step must carry the human's recorded response —
+    # otherwise it was deemed done without the human ever answering.
+    t = model.new_task("i", "g")
+    t["steps"].append({"id": "a", "status": model.STEP_SUCCEEDED,
+                       "awaits_human": True,
+                       "actual_result": {"summary": "presented"}})
+    assert any("human response" in e for e in model.validate(t))
+    # With the response recorded, it validates.
+    t["steps"][0]["actual_result"]["human_response"] = "go ahead"
+    assert model.validate(t) == []
+
+
 def test_last_succeeded():
     t = model.new_task("i", "g")
     assert model.last_succeeded(t) is None

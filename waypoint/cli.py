@@ -10,8 +10,9 @@ Primary (checkpoint protocol — the skill drives these):
                       [--review auto|manual] [--reviewer R] [--max-retries K] [--auto]
     waypoint plan     --step b --purpose P [--id TASK]
     waypoint set-step --step b --purpose P [--target T] [--expected E]
-                      [--context C] [--input PATH ...] [--id TASK]
-    waypoint commit   --summary S [--artifact PATH ...] [--git] [--id TASK]
+                      [--context C] [--input PATH ...] [--awaits-human] [--id TASK]
+    waypoint commit   --summary S [--artifact PATH ...] [--git]
+                      [--human-ack ANSWER] [--id TASK]
     waypoint status   [--id TASK] [--json]
     waypoint steps    [--id TASK]
     waypoint resume   [--id TASK]
@@ -125,6 +126,11 @@ def cmd_set_step(root: str, args) -> int:
         "expected_result": args.expected or "",
         "status": model.STEP_IN_PROGRESS,
     }
+    if args.awaits_human:
+        # This step's done-condition is a human answer (decision gate,
+        # interactive login/OTP, approval). A worker can prepare it but never
+        # supply it — so commit will refuse to close it without --human-ack.
+        task["current_step"]["awaits_human"] = True
     store.save(root, task)
     if args.quiet:
         print(f"started step {args.step}")
@@ -156,6 +162,14 @@ def cmd_commit(root: str, args) -> int:
     if cur is None:
         print("waypoint: no step in progress to commit", file=sys.stderr)
         return 1
+    if cur.get("awaits_human") and not args.human_ack:
+        print(
+            f"waypoint: step {cur.get('id')!r} awaits a human answer — do NOT "
+            f"commit until the human responds (presenting a decision or "
+            f"printing a login prompt is not 'done'). Once they answer, re-run "
+            f"`waypoint commit ... --human-ack \"<their answer>\"`.",
+            file=sys.stderr)
+        return 1
     artifacts = [fingerprint.fingerprint(p) for p in (args.artifact or [])]
     step_commit = None
     if args.git:
@@ -167,6 +181,8 @@ def cmd_commit(root: str, args) -> int:
             for a in artifacts:
                 a["step_commit"] = step_commit
     cur["actual_result"] = {"summary": args.summary or "", "artifacts": artifacts}
+    if args.human_ack:
+        cur["actual_result"]["human_response"] = args.human_ack
     if step_commit:
         cur["step_commit"] = step_commit
     cur["status"] = model.STEP_SUCCEEDED
@@ -473,12 +489,19 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--expected")
     s.add_argument("--context")
     s.add_argument("--input", nargs="*")
+    s.add_argument("--awaits-human", action="store_true",
+                   help="this step's done-condition is a human answer "
+                        "(decision gate, login/OTP, approval); commit will "
+                        "require --human-ack to close it")
     s.add_argument("--id")
 
     s = sub.add_parser("commit", parents=[common]); s.set_defaults(fn=cmd_commit)
     s.add_argument("--summary")
     s.add_argument("--artifact", nargs="*")
     s.add_argument("--git", action="store_true")
+    s.add_argument("--human-ack",
+                   help="the human's actual answer; required to commit a step "
+                        "marked --awaits-human (records it as the step result)")
     s.add_argument("--id")
 
     s = sub.add_parser("plan", parents=[common]); s.set_defaults(fn=cmd_plan)

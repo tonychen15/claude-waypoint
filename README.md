@@ -24,12 +24,32 @@ new session ──SessionStart hook──▶ "⏸ Paused task 'X' at step c — 
 re-hydrate from the last committed step's artifacts → continue forward (coffee break)
 ```
 
+## Quickstart
+
+**Run a project, resumably — three commands and a notification.** (Install once first — see [Installation](#installation).) Inside a Claude Code session, in your git project, **invoke the skill** — say it in words or use the slash form:
+
+> `/waypoint build a CLI todo app with add/list/done and tests`
+
+The in-session agent decomposes the goal, **shows you the plan and waits for one OK**, then runs each step via a worker subagent, verifies it, and commits a durable checkpoint. When it finishes, it pings you **"✅ done."**
+
+```console
+/waypoint <goal>     # start + run it (you approve the plan once)
+waypoint status      # where am I? — goal, "step 3 of 5", current step
+waypoint steps       # the step list: ✓ done · ▶ current · ☐ pending
+waypoint resume      # in a new session, continue from the last commit
+```
+
+That's the whole human surface — the agent runs `plan`/`set-step`/`commit` for you. Optional knobs: `--review manual` (you approve each step's diff), `--reviewer <name>` (a configured reviewer checks each step), `--max-retries K`. For a worked step-by-step example see [Usage](#usage); for the no-live-session case see the *Advanced — headless mode* note there.
+
+> **Trigger the skill, not the bare command.** `/waypoint <goal>` (or "use waypoint to build X") makes the agent orchestrate; typing `!waypoint start "…"` only creates the task record without running it.
+
 ## Core guarantees
 
 - **At most one uncommitted step at any instant** — enforced by a `PreToolUse` tripwire — so the last succeeded step is always durable *before* any new work, and a crash loses at most the in-flight step.
 - **Resume integrity** — each step's result artifacts are fingerprinted (`git hash-object`); on resume, a changed/missing file is detected and surfaced rather than silently trusted.
 - **Idempotent side effects** — outbound third-party writes (Telegram, email, POST, `git push`) use a write-ahead ledger so they are never double-fired on re-run.
 - **No silent state mutation** — paused tasks persist byte-for-byte; the system reports staleness but never auto-archives by age. You decide.
+- **Human-input steps are never auto-completed** — a step whose done-condition is a human answer (decision gate, interactive login/OTP, approval) is marked `--awaits-human`; `commit` refuses to close it without `--human-ack`, so "presented the choice / printed a login prompt" can never be mistaken for "done" while you're still deciding.
 - **Autonomous resume across a rate-limit break** (opt-in `--auto`) — a thin cron trigger relaunches the task headless, and on a usage-limit it reschedules itself to wake at the reset time. Headless runs stop at every human gate (outbound writes, ambiguous effects) rather than firing them unattended. Adapted from a proven `research.sh` orchestrator pattern.
 
 ## Installation
@@ -85,7 +105,23 @@ Per-project cleanup (optional): delete `<project>/.claude/waypoint/` to drop sav
 
 ## Usage
 
-In practice **Claude drives these commands for you** via the `waypoint` skill — you just say "track this" and approve a plan. The commands below are what runs under the hood (and what you'd type to inspect or steer a task yourself).
+### Run a project (the simple way)
+
+Three commands and a notification — the agent does the rest:
+
+```console
+$ waypoint start "Build a CLI todo app with tests"   # you approve the plan once
+… the in-session agent decomposes the goal, runs each step via subagents,
+  and checkpoints verified work …
+$ waypoint status      # glance anytime
+$ waypoint resume      # after a new session, continue from the last commit
+# …and the in-session agent pings you "✅ done" when the task completes
+```
+
+That's the whole human surface. Everything below is the machinery the agent
+drives for you (and a headless fallback) — you don't normally type it.
+
+In practice **Claude drives these commands for you** via the `waypoint` skill — the in-session agent orchestrates subagents per step and commits durable checkpoints. The commands below are what runs under the hood (and what you'd type to inspect or steer a task yourself).
 
 > **Where does this run?** `waypoint` is an ordinary terminal command — *not* a subcommand of the `claude` CLI. Inside a session, Claude Code runs it for you through its Bash tool; you can also run it yourself in any shell (e.g. `waypoint status`) to inspect or recover a task. The hooks are executed automatically by the Claude Code harness (never by hand), and `waypoint-cron.sh` runs from cron. This is why the install puts `waypoint` on your PATH and makes `waypoint` importable by the hook interpreter — see [Installation](#installation).
 
@@ -93,12 +129,21 @@ In practice **Claude drives these commands for you** via the `waypoint` skill �
 |---|---|
 | `waypoint start --goal "<g>" [--scope <p>…] [--auto]` | Begin a tracked task; arms the tripwire. |
 | `waypoint plan --step <id> --purpose "<p>"` | Declare a planned step (the roadmap), so progress reads "step N of M". |
-| `waypoint set-step --step <id> --purpose "<p>" [--expected "<e>"] [--input <path>…]` | Declare the next step (required before editing files). |
-| `waypoint commit --summary "<s>" [--artifact <path>…] [--git]` | Mark the current step succeeded; fingerprint artifacts (and optionally git-commit them). |
+| `waypoint set-step --step <id> --purpose "<p>" [--expected "<e>"] [--input <path>…] [--awaits-human]` | Declare the next step (required before editing files). `--awaits-human` marks a step whose done-condition is a human answer (decision gate, login/OTP, approval). |
+| `waypoint commit --summary "<s>" [--artifact <path>…] [--git] [--human-ack "<answer>"]` | Mark the current step succeeded; fingerprint artifacts (and optionally git-commit them). An `--awaits-human` step refuses to commit without `--human-ack` (the human's real answer, recorded as the step result). |
 | `waypoint status` / `waypoint steps` / `waypoint list` | Show the roadmap + progress / each step by name with ✓ ▶ ☐ / active tasks **in this folder**. |
 | `waypoint resume [--id <t>]` | Re-hydrate after an interruption; integrity-checks the last step's artifacts. |
 | `waypoint check` | Re-verify the last step's artifacts — INTACT / MISSING / CHANGED (exit 1 if any drift). |
 | `waypoint where [--id <t>]` | Print where state is stored (the `.claude/waypoint` dir and the task dir). |
+| `waypoint watch [--id <t>] [--once] [--interval S]` | Read-only live monitor: progress + worker liveness (Phase 2 reconciler). |
+| `waypoint run [--id <t>] [--allow push] [--no-follow]` | Spawn a headless worker for the task (Phase 2) and follow it with the monitor. Outbound ops off by default. |
+| `waypoint resume-worker [--id <t>]` | Manually kill the worker and relaunch it resuming its session (Phase 2). |
+| `waypoint guard [--id <t>]` (or `run --guard`) | Autonomous watchdog (Phase 2): auto-takeover on death/stall, progress-gated loop guard, completion/halt notification. |
+
+> **Advanced — headless mode.** When there's no live Claude session to host the
+> orchestrator (cron, CI, rate-limit auto-resume), `waypoint run --id <t> --guard`
+> spawns a worker *subprocess* supervised by a watchdog instead of the in-session
+> agent + subagents. Prefer the skill (above) whenever a session is available.
 | `waypoint done` / `waypoint abandon` | Close the task; move it to `archive/`. |
 
 Every command accepts `--id <task>` to target a specific task; mutating commands (`start`, `plan`, `set-step`, `commit`) print an informative progress beat by default, and `-q`/`--quiet` collapses output to one line.
@@ -158,7 +203,7 @@ No step in progress. Next planned: test — Test /health returns 200. Declare it
 
 ## Status
 
-Implemented and tested — 31 passing tests, cross-LLM (Gemini) reviewed. See [`docs/design.md`](docs/design.md) for the full design.
+Implemented and tested — 135 passing tests, cross-LLM (Gemini) reviewed. See [`docs/design.md`](docs/design.md) for the full design.
 
 ## Why "waypoint"
 

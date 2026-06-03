@@ -1,12 +1,18 @@
 """The ``waypoint`` command-line interface.
 
-Subcommands implement the lifecycle and the per-step checkpoint protocol:
+The primary way to RUN a project is the ``/waypoint`` skill — the in-session
+agent decomposes the goal and dispatches subagents per step, checkpointing via
+these verbs. The CLI is that skill's durable backend (and a headless fallback).
 
-    waypoint start    --goal G [--id ID] [--scope P ...] [--auto]
+Primary (checkpoint protocol — the skill drives these):
+
+    waypoint start    --goal G [--id ID] [--scope P ...]
+                      [--review auto|manual] [--reviewer R] [--max-retries K] [--auto]
     waypoint plan     --step b --purpose P [--id TASK]
     waypoint set-step --step b --purpose P [--target T] [--expected E]
-                      [--context C] [--input PATH ...] [--id TASK]
-    waypoint commit   --summary S [--artifact PATH ...] [--git] [--id TASK]
+                      [--context C] [--input PATH ...] [--awaits-human] [--id TASK]
+    waypoint commit   --summary S [--artifact PATH ...] [--git]
+                      [--human-ack ANSWER] [--id TASK]
     waypoint status   [--id TASK] [--json]
     waypoint steps    [--id TASK]
     waypoint resume   [--id TASK]
@@ -16,8 +22,22 @@ Subcommands implement the lifecycle and the per-step checkpoint protocol:
     waypoint abandon  [--id TASK]
     waypoint list
 
+Advanced (headless — only when no live session hosts the skill: cron/CI):
+
+    waypoint watch         [--id TASK] [--once] [--interval S]
+    waypoint run           --id TASK [--allow GRANT ...] [--guard] [--no-follow]
+    waypoint resume-worker --id TASK
+    waypoint guard         --id TASK [--idle-timeout S] [--wait-timeout S] [--max-no-progress K]
+
 Global: ``--root PATH`` and ``-q/--quiet`` (collapse mutating-command output
-to one line). ``list`` covers the current folder only.
+to one line). ``list`` covers the current folder only. ``watch`` is a
+read-only live monitor of progress + worker liveness (Phase 2 reconciler); it
+never mutates state. ``run`` spawns a headless worker for the task and follows
+it with the monitor; ``resume-worker`` kills and ``--resume``-relaunches it.
+Outbound grants are off by default (``--allow push`` etc.). ``guard`` (or
+``run --guard``) is the autonomous watchdog: it auto-takes-over a dead/stalled
+worker (kill + ``--resume``), bounded by a progress-gated loop guard, and
+notifies on completion or when it gives up.
 
 The state machine (§2): a step is committed only after it succeeds; at most
 one uncommitted ``current_step`` exists at a time; ``set-step`` opens it and
@@ -35,7 +55,7 @@ import subprocess
 import sys
 from typing import Optional
 
-from . import __version__, fingerprint, model, progress, statusmd, store
+from . import __version__, fingerprint, guard, launcher, model, monitor, progress, runtime, statusmd, store
 
 
 def _slug(text: str) -> str:
@@ -77,7 +97,9 @@ def cmd_start(root: str, args) -> int:
         print(f"waypoint: note — other active task(s) present: {names}",
               file=sys.stderr)
     task = model.new_task(task_id, args.goal, scope=args.scope,
-                          owner_session=args.session or "", auto=args.auto)
+                          owner_session=args.session or "", auto=args.auto,
+                          review=args.review, reviewer=args.reviewer,
+                          max_retries=args.max_retries)
     store.save(root, task)
     if args.quiet:
         print(task_id)
@@ -104,6 +126,11 @@ def cmd_set_step(root: str, args) -> int:
         "expected_result": args.expected or "",
         "status": model.STEP_IN_PROGRESS,
     }
+    if args.awaits_human:
+        # This step's done-condition is a human answer (decision gate,
+        # interactive login/OTP, approval). A worker can prepare it but never
+        # supply it — so commit will refuse to close it without --human-ack.
+        task["current_step"]["awaits_human"] = True
     store.save(root, task)
     if args.quiet:
         print(f"started step {args.step}")
@@ -135,6 +162,14 @@ def cmd_commit(root: str, args) -> int:
     if cur is None:
         print("waypoint: no step in progress to commit", file=sys.stderr)
         return 1
+    if cur.get("awaits_human") and not args.human_ack:
+        print(
+            f"waypoint: step {cur.get('id')!r} awaits a human answer — do NOT "
+            f"commit until the human responds (presenting a decision or "
+            f"printing a login prompt is not 'done'). Once they answer, re-run "
+            f"`waypoint commit ... --human-ack \"<their answer>\"`.",
+            file=sys.stderr)
+        return 1
     artifacts = [fingerprint.fingerprint(p) for p in (args.artifact or [])]
     step_commit = None
     if args.git:
@@ -146,6 +181,8 @@ def cmd_commit(root: str, args) -> int:
             for a in artifacts:
                 a["step_commit"] = step_commit
     cur["actual_result"] = {"summary": args.summary or "", "artifacts": artifacts}
+    if args.human_ack:
+        cur["actual_result"]["human_response"] = args.human_ack
     if step_commit:
         cur["step_commit"] = step_commit
     cur["status"] = model.STEP_SUCCEEDED
@@ -343,6 +380,79 @@ def cmd_list(root: str, args) -> int:
     return 0
 
 
+def cmd_watch(root: str, args) -> int:
+    import time
+    task_id, _ = _resolve(root, args.id)
+    while True:
+        _, task = _resolve(root, task_id)   # reload each tick
+        snap = runtime.snapshot(root, task_id)
+        print(monitor.render(task, snap))
+        if args.once or task.get("status") != model.IN_PROGRESS:
+            return 0
+        print("-" * 40)
+        time.sleep(args.interval)
+
+
+def cmd_resume_worker(root: str, args) -> int:
+    task_id, task = _resolve(root, args.id)
+    info = launcher.worker_info(root, task_id)
+    session = info.get("session_id") if info else None
+    launcher.stop(root, task_id)
+    new = launcher.spawn(root, task_id, task, claude_bin=args.claude_bin,
+                         resume_session=session)
+    print(f"resumed worker — pid {new['pid']}, session {new['session_id']}"
+          + ("" if session else " (fresh; no prior session)"))
+    return 0
+
+
+def cmd_guard(root: str, args) -> int:
+    import time
+    task_id, _ = _resolve(root, args.id)
+    config = {"idle_timeout": args.idle_timeout, "wait_timeout": args.wait_timeout,
+              "max_no_progress": args.max_no_progress}
+    guard.save_state(root, task_id, guard.load_state(root, task_id))
+    while True:
+        action = guard.step(root, task_id, config=config,
+                            claude_bin=args.claude_bin)
+        if action in (guard.HALT, guard.COMPLETE):
+            return 0
+        _, task = _resolve(root, task_id)
+        print(monitor.render(task, runtime.snapshot(root, task_id)))
+        if args.once:
+            return 0
+        print("-" * 40)
+        time.sleep(args.interval)
+
+
+def cmd_run(root: str, args) -> int:
+    task_id, task = _resolve(root, args.id)
+    args.id = task_id  # normalise so delegated commands (cmd_guard/cmd_watch) use the resolved id
+    if task.get("status") != model.IN_PROGRESS:
+        print(f"waypoint: task {task_id!r} is not in_progress "
+              f"(status: {task.get('status')!r})", file=sys.stderr)
+        return 1
+    if not task.get("plan"):
+        print("waypoint: declare a plan first (`waypoint plan ...`) before "
+              "run", file=sys.stderr)
+        return 1
+    for g in (args.allow or []):
+        if g not in model.GRANTS:
+            print(f"waypoint: unknown grant {g!r} (choices: "
+                  f"{', '.join(sorted(model.GRANTS))})", file=sys.stderr)
+            return 1
+        model.set_grant(task, g)
+    store.save(root, task)
+    info = launcher.spawn(root, task_id, task, claude_bin=args.claude_bin)
+    print(f"worker started — pid {info['pid']}, session {info['session_id']}")
+    if getattr(args, "guard", False):
+        guard.save_state(root, task_id, guard.load_state(root, task_id))
+    if args.no_follow:
+        return 0
+    if getattr(args, "guard", False):
+        return cmd_guard(root, args)
+    return cmd_watch(root, args)
+
+
 def build_parser() -> argparse.ArgumentParser:
     # Shared options live on a parent parser so they are accepted *after* the
     # subcommand name (e.g. `waypoint start --root X`), not only before it.
@@ -365,6 +475,12 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--scope", nargs="*")
     s.add_argument("--session", default="")
     s.add_argument("--auto", action="store_true")
+    s.add_argument("--review", choices=["auto", "manual"], default="auto",
+                   help="per-step verification: auto (orchestrator/reviewer) or manual (you)")
+    s.add_argument("--reviewer", default="",
+                   help="name/command of a configured reviewer (e.g. gemini); empty = none")
+    s.add_argument("--max-retries", type=int, default=2,
+                   help="per-step worker retries before escalating (default 2)")
 
     s = sub.add_parser("set-step", parents=[common]); s.set_defaults(fn=cmd_set_step)
     s.add_argument("--step", required=True)
@@ -373,12 +489,19 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--expected")
     s.add_argument("--context")
     s.add_argument("--input", nargs="*")
+    s.add_argument("--awaits-human", action="store_true",
+                   help="this step's done-condition is a human answer "
+                        "(decision gate, login/OTP, approval); commit will "
+                        "require --human-ack to close it")
     s.add_argument("--id")
 
     s = sub.add_parser("commit", parents=[common]); s.set_defaults(fn=cmd_commit)
     s.add_argument("--summary")
     s.add_argument("--artifact", nargs="*")
     s.add_argument("--git", action="store_true")
+    s.add_argument("--human-ack",
+                   help="the human's actual answer; required to commit a step "
+                        "marked --awaits-human (records it as the step result)")
     s.add_argument("--id")
 
     s = sub.add_parser("plan", parents=[common]); s.set_defaults(fn=cmd_plan)
@@ -404,6 +527,52 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--json", action="store_true")
 
     sub.add_parser("list", parents=[common]).set_defaults(fn=cmd_list)
+
+    s = sub.add_parser("watch", parents=[common],
+                       help="(headless) read-only live monitor of a worker")
+    s.set_defaults(fn=cmd_watch)
+    s.add_argument("--id")
+    s.add_argument("--once", action="store_true",
+                   help="render once and exit (no refresh loop)")
+    s.add_argument("--interval", type=float, default=3.0,
+                   help="refresh seconds when looping (default: 3)")
+
+    s = sub.add_parser("resume-worker", parents=[common],
+                       help="(headless) kill + --resume the worker subprocess")
+    s.set_defaults(fn=cmd_resume_worker)
+    s.add_argument("--id")
+    s.add_argument("--claude-bin", default="claude")
+
+    s = sub.add_parser("run", parents=[common],
+                       help="(headless) spawn a worker subprocess for the task")
+    s.set_defaults(fn=cmd_run)
+    s.add_argument("--id")
+    s.add_argument("--allow", action="append",
+                   help="grant an outbound op (push|remote_write); "
+                        "repeatable; grants are persisted to task state")
+    s.add_argument("--no-follow", action="store_true",
+                   help="spawn the worker and return (do not follow with the monitor)")
+    s.add_argument("--claude-bin", default="claude",
+                   help="worker binary (default: claude; override for testing)")
+    s.add_argument("--once", action="store_true", help=argparse.SUPPRESS)
+    s.add_argument("--interval", type=float, default=3.0, help=argparse.SUPPRESS)
+    s.add_argument("--guard", action="store_true",
+                   help="follow with the autonomous guard (auto-takeover) instead of read-only watch")
+    s.add_argument("--idle-timeout", type=float, default=guard.DEFAULTS["idle_timeout"])
+    s.add_argument("--wait-timeout", type=float, default=guard.DEFAULTS["wait_timeout"])
+    s.add_argument("--max-no-progress", type=int, default=guard.DEFAULTS["max_no_progress"])
+
+    s = sub.add_parser("guard", parents=[common],
+                       help="(headless) autonomous watchdog over a worker")
+    s.set_defaults(fn=cmd_guard)
+    s.add_argument("--id")
+    s.add_argument("--claude-bin", default="claude")
+    s.add_argument("--once", action="store_true")
+    s.add_argument("--interval", type=float, default=3.0)
+    s.add_argument("--idle-timeout", type=float, default=guard.DEFAULTS["idle_timeout"])
+    s.add_argument("--wait-timeout", type=float, default=guard.DEFAULTS["wait_timeout"])
+    s.add_argument("--max-no-progress", type=int, default=guard.DEFAULTS["max_no_progress"])
+
     return p
 
 

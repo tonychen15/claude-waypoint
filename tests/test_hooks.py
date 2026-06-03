@@ -86,3 +86,117 @@ def test_sessionstart_silent_when_no_task(root, monkeypatch, capsys):
     mod = _load("session_start")
     assert _run(mod, {"cwd": root, "source": "startup"}, monkeypatch) == 0
     assert capsys.readouterr().out.strip() == ""
+
+
+def test_post_tool_use_touches_heartbeat(root, monkeypatch):
+    from waypoint import model, runtime, store
+    store.save(root, model.new_task("t1", "g"))
+    mod = _load("post_tool_use")
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", root)
+    assert _run(mod, {"tool_name": "Edit", "cwd": root}, monkeypatch) == 0
+    assert runtime.heartbeat_age(root, "t1") is not None
+
+
+def test_notification_records_event(root, monkeypatch):
+    from waypoint import model, runtime, store
+    store.save(root, model.new_task("t1", "g"))
+    mod = _load("notification")
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", root)
+    _run(mod, {"message": "waiting for your input", "cwd": root}, monkeypatch)
+    evs = runtime.read_events(root, "t1")
+    assert evs and evs[-1]["kind"] == "notification"
+    assert "waiting" in evs[-1]["message"]
+
+
+def test_stop_records_turn_done(root, monkeypatch):
+    from waypoint import model, runtime, store
+    store.save(root, model.new_task("t1", "g"))
+    mod = _load("stop")
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", root)
+    _run(mod, {"cwd": root}, monkeypatch)
+    evs = runtime.read_events(root, "t1")
+    assert evs and evs[-1]["kind"] == "turn_done"
+
+
+def test_worker_hooks_never_raise_on_garbage(root, monkeypatch):
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", root)
+    for name in ("post_tool_use", "notification", "stop"):
+        mod = _load(name)
+        monkeypatch.setattr("sys.stdin", __import__("io").StringIO("not json"))
+        assert mod.main() == 0
+
+
+def test_guard_blocks_local_delete(root, monkeypatch):
+    from waypoint import model, store
+    store.save(root, model.new_task("t1", "g"))
+    mod = _load("pre_tool_use_guard")
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", root)
+    rc = _run(mod, {"tool_name": "Bash",
+                    "tool_input": {"command": "rm -rf build"},
+                    "cwd": root}, monkeypatch)
+    assert rc == 2
+
+
+def test_guard_blocks_ungranted_push_and_records_needs_auth(root, monkeypatch):
+    from waypoint import model, runtime, store
+    store.save(root, model.new_task("t1", "g"))
+    mod = _load("pre_tool_use_guard")
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", root)
+    rc = _run(mod, {"tool_name": "Bash",
+                    "tool_input": {"command": "git push origin main"},
+                    "cwd": root}, monkeypatch)
+    assert rc == 2
+    evs = runtime.read_events(root, "t1")
+    assert evs and evs[-1]["kind"] == "needs-auth" and evs[-1]["op"] == "push"
+
+
+def test_guard_allows_granted_push(root, monkeypatch):
+    from waypoint import model, store
+    t = model.new_task("t1", "g")
+    model.set_grant(t, model.GRANT_PUSH)
+    store.save(root, t)
+    mod = _load("pre_tool_use_guard")
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", root)
+    rc = _run(mod, {"tool_name": "Bash",
+                    "tool_input": {"command": "git push"},
+                    "cwd": root}, monkeypatch)
+    assert rc == 0
+
+
+def test_guard_allows_safe_bash_and_non_bash(root, monkeypatch):
+    from waypoint import model, store
+    store.save(root, model.new_task("t1", "g"))
+    mod = _load("pre_tool_use_guard")
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", root)
+    assert _run(mod, {"tool_name": "Bash",
+                      "tool_input": {"command": "ls -la"}, "cwd": root},
+                monkeypatch) == 0
+    assert _run(mod, {"tool_name": "Edit",
+                      "tool_input": {"file_path": "x"}, "cwd": root},
+                monkeypatch) == 0
+
+
+def test_post_tool_use_scopes_to_env_task(root, monkeypatch):
+    from waypoint import model, runtime, store
+    store.save(root, model.new_task("a", "g"))
+    store.save(root, model.new_task("b", "g"))
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", root)
+    monkeypatch.setenv("WAYPOINT_TASK_ID", "a")
+    mod = _load("post_tool_use")
+    _run(mod, {"tool_name": "Edit", "cwd": root}, monkeypatch)
+    assert runtime.heartbeat_age(root, "a") is not None
+    assert runtime.heartbeat_age(root, "b") is None     # NOT contaminated
+
+
+def test_guard_grant_scoped_to_env_task(root, monkeypatch):
+    # task 'b' has push granted; the worker is task 'a' (ungranted) -> still blocked
+    from waypoint import model, store
+    store.save(root, model.new_task("a", "g"))
+    tb = model.new_task("b", "g"); model.set_grant(tb, model.GRANT_PUSH)
+    store.save(root, tb)
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", root)
+    monkeypatch.setenv("WAYPOINT_TASK_ID", "a")
+    mod = _load("pre_tool_use_guard")
+    rc = _run(mod, {"tool_name": "Bash",
+                    "tool_input": {"command": "git push"}, "cwd": root}, monkeypatch)
+    assert rc == 2      # ungranted for task 'a' despite 'b' having the grant

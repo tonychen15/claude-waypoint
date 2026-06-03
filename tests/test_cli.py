@@ -244,3 +244,130 @@ def test_check_output_labels_artifacts(root, tmp_path, capsys):
     assert "INTACT" in out and str(art) in out
 
 
+def test_watch_once_renders_progress_and_liveness(root, capsys):
+    from waypoint import runtime
+    cli.main(["start", "--goal", "g", "--id", "t1", "--root", root])
+    cli.main(["plan", "--step", "a", "--purpose", "first", "--id", "t1",
+              "--root", root])
+    runtime.touch_heartbeat(root, "t1")
+    capsys.readouterr()
+    assert cli.main(["watch", "--once", "--id", "t1", "--root", root]) == 0
+    out = capsys.readouterr().out
+    assert "0 of 1 done" in out
+    assert "worker:" in out
+
+
+def test_run_spawns_worker_with_grants(root, capsys, tmp_path):
+    import time
+    from waypoint import launcher
+    stub = tmp_path / "fakeclaude"
+    stub.write_text("#!/usr/bin/env python3\nimport time\ntime.sleep(30)\n")
+    stub.chmod(0o755)
+    cli.main(["start", "--goal", "g", "--id", "t1", "--root", root])
+    cli.main(["plan", "--step", "a", "--purpose", "first", "--id", "t1",
+              "--root", root])
+    rc = cli.main(["run", "--id", "t1", "--no-follow", "--allow", "push",
+                   "--claude-bin", str(stub), "--root", root])
+    try:
+        assert rc == 0
+        from waypoint import model, store
+        assert model.has_grant(store.load(root, "t1"), "push") is True
+        info = launcher.worker_info(root, "t1")
+        assert info and info["pid"]
+    finally:
+        launcher.stop(root, "t1")
+
+
+def test_run_requires_a_plan(root):
+    cli.main(["start", "--goal", "g", "--id", "t1", "--root", root])
+    assert cli.main(["run", "--id", "t1", "--no-follow", "--root", root]) == 1
+
+
+def test_resume_worker_stops_old_and_spawns_resume(root, tmp_path):
+    import time
+    from waypoint import launcher, store
+    stub = tmp_path / "fakeclaude"
+    stub.write_text("#!/usr/bin/env python3\nimport time\ntime.sleep(30)\n")
+    stub.chmod(0o755)
+    cli.main(["start", "--goal", "g", "--id", "t1", "--root", root])
+    cli.main(["plan", "--step", "a", "--purpose", "p", "--id", "t1", "--root", root])
+    cli.main(["run", "--id", "t1", "--no-follow", "--claude-bin", str(stub),
+              "--root", root])
+    first = launcher.worker_info(root, "t1")
+    rc = cli.main(["resume-worker", "--id", "t1", "--claude-bin", str(stub),
+                   "--root", root])
+    try:
+        assert rc == 0
+        second = launcher.worker_info(root, "t1")
+        assert second["pid"] != first["pid"]
+        assert second["resumed"] is True
+        assert second["session_id"] == first["session_id"]  # same session resumed
+    finally:
+        launcher.stop(root, "t1")
+
+
+def test_run_with_guard_spawns_and_returns(root, tmp_path):
+    from waypoint import launcher, guard
+    stub = tmp_path / "fakeclaude"
+    stub.write_text("#!/usr/bin/env python3\nimport time\ntime.sleep(30)\n")
+    stub.chmod(0o755)
+    cli.main(["start", "--goal", "g", "--id", "t1", "--root", root])
+    cli.main(["plan", "--step", "a", "--purpose", "p", "--id", "t1", "--root", root])
+    rc = cli.main(["run", "--id", "t1", "--guard", "--no-follow",
+                   "--claude-bin", str(stub), "--root", root])
+    try:
+        assert rc == 0
+        assert launcher.worker_info(root, "t1")["pid"]
+        assert guard.load_state(root, "t1")["fsm"] == guard.WATCHING
+    finally:
+        launcher.stop(root, "t1")
+
+
+def test_start_persists_review_policy(root):
+    cli.main(["start", "--goal", "g", "--id", "t1", "--review", "manual",
+              "--reviewer", "gemini", "--max-retries", "3", "--root", root])
+    t = store.load(root, "t1")
+    assert t["review"] == "manual" and t["reviewer"] == "gemini"
+    assert t["max_retries"] == 3
+
+
+def test_start_review_defaults(root):
+    cli.main(["start", "--goal", "g", "--id", "t2", "--root", root])
+    t = store.load(root, "t2")
+    assert t["review"] == "auto" and t["max_retries"] == 2
+
+
+def test_set_step_records_awaits_human_flag(root):
+    cli.main(["start", "--goal", "g", "--id", "t1", "--root", root])
+    assert cli.main(["set-step", "--step", "a", "--purpose", "ask user",
+                     "--awaits-human", "--id", "t1", "--root", root]) == 0
+    assert store.load(root, "t1")["current_step"]["awaits_human"] is True
+
+
+def test_commit_blocks_human_gate_without_ack(root, capsys):
+    # A step that awaits a human answer must NOT be committable until the
+    # human actually responds — the orchestrator cannot self-verify it done.
+    cli.main(["start", "--goal", "g", "--id", "t1", "--root", root])
+    cli.main(["set-step", "--step", "a", "--purpose", "decision gate",
+              "--awaits-human", "--id", "t1", "--root", root])
+    capsys.readouterr()
+    rc = cli.main(["commit", "--summary", "presented the decision; awaiting user",
+                   "--id", "t1", "--root", root])
+    assert rc == 1
+    assert "human" in capsys.readouterr().err.lower()
+    # The step stays open (not deemed done).
+    t = store.load(root, "t1")
+    assert t["current_step"] is not None and t["steps"] == []
+
+
+def test_commit_human_gate_with_ack_records_response(root):
+    cli.main(["start", "--goal", "g", "--id", "t1", "--root", root])
+    cli.main(["set-step", "--step", "a", "--purpose", "decision gate",
+              "--awaits-human", "--id", "t1", "--root", root])
+    rc = cli.main(["commit", "--summary", "user chose interview prep",
+                   "--human-ack", "proceed to interview prep", "--id", "t1",
+                   "--root", root])
+    assert rc == 0
+    step = store.load(root, "t1")["steps"][0]
+    assert step["status"] == model.STEP_SUCCEEDED
+    assert step["actual_result"]["human_response"] == "proceed to interview prep"

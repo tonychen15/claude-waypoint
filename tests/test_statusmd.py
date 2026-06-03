@@ -19,6 +19,14 @@ def test_render_shows_roadmap_and_progress():
     assert "Next on resume" in out
 
 
+def test_render_marks_human_gate_step():
+    t = model.new_task("t1", "g")
+    t["current_step"] = {"id": "b", "purpose": "decision gate",
+                         "status": "in_progress", "awaits_human": True}
+    out = statusmd.render(t)
+    assert "[HUMAN]" in out
+
+
 def test_render_between_steps():
     t = model.new_task("t1", "g")
     t["steps"].append({"id": "a", "purpose": "first", "status": "succeeded"})

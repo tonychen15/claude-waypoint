@@ -31,13 +31,20 @@ def render(task: dict) -> str:
         "```",
     ]
 
+    def _gate(step: dict) -> str:
+        # Flag human-gate steps so an auditor sees they hinge on a human answer.
+        return " [HUMAN]" if step.get("awaits_human") else ""
+
     for step in task.get("steps", []):
-        lines.append(f"✓ {step.get('id', '?')}  {step.get('purpose', '')}")
+        lines.append(
+            f"✓ {step.get('id', '?')}  {step.get('purpose', '')}{_gate(step)}"
+        )
 
     cur = task.get("current_step")
     if cur:
         lines.append(
-            f"▶ {cur.get('id', '?')}  {cur.get('purpose', '')}     ← current"
+            f"▶ {cur.get('id', '?')}  {cur.get('purpose', '')}{_gate(cur)}"
+            f"     ← current"
         )
 
     for step in rem:

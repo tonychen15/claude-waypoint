@@ -24,6 +24,19 @@ STEP_SUCCEEDED = "succeeded"
 EFFECT_PENDING = "pending"
 EFFECT_COMPLETED = "completed"
 
+# Outbound-operation grants (Phase 2 permission policy). Default: nothing
+# granted; the `run` authorization gate enables what a task may do. Remote
+# deletes are intentionally not grantable — they stay unconditionally blocked
+# by the worker's deny-by-default posture.
+GRANT_PUSH = "push"
+GRANT_REMOTE_WRITE = "remote_write"
+GRANTS = {GRANT_PUSH, GRANT_REMOTE_WRITE}
+
+# Orchestration policy (Phase 3, intra-Claude skill).
+REVIEW_AUTO = "auto"
+REVIEW_MANUAL = "manual"
+REVIEW_MODES = {REVIEW_AUTO, REVIEW_MANUAL}
+
 _REQUIRED_TASK_KEYS = ("task_id", "goal", "status", "created_at", "steps")
 
 
@@ -44,6 +57,7 @@ def now_iso(clock: Optional[datetime] = None) -> str:
 
 def new_task(task_id: str, goal: str, *, scope: Optional[list] = None,
              owner_session: str = "", auto: bool = False,
+             review: str = "auto", reviewer: str = "", max_retries: int = 2,
              clock: Optional[datetime] = None) -> dict:
     """Build a fresh task dict with no steps and no current step.
 
@@ -53,6 +67,9 @@ def new_task(task_id: str, goal: str, *, scope: Optional[list] = None,
         scope: Declared folders/files for overlap detection (§8).
         owner_session: Adopting session id.
         auto: Whether autonomous cron resume is enabled (§6A).
+        review: Orchestration review mode (``"auto"`` or ``"manual"``).
+        reviewer: Name of the reviewing entity when mode is ``"manual"``.
+        max_retries: Maximum retry attempts for orchestration policy.
         clock: Optional fixed datetime (for tests).
 
     Returns:
@@ -73,6 +90,10 @@ def new_task(task_id: str, goal: str, *, scope: Optional[list] = None,
         "steps": [],
         "current_step": None,
         "plan": [],
+        "grants": {},
+        "review": review,
+        "reviewer": reviewer,
+        "max_retries": int(max_retries),
     }
 
 
@@ -104,6 +125,15 @@ def validate(task: dict) -> list:
                 errors.append(
                     f"committed step[{i}] {step.get('id')!r} is not 'succeeded'"
                 )
+            # A human-gate step is "done" only once the human actually answered.
+            if step.get("awaits_human") and not (
+                isinstance(step.get("actual_result"), dict)
+                and step["actual_result"].get("human_response")
+            ):
+                errors.append(
+                    f"committed step[{i}] {step.get('id')!r} awaits a human "
+                    f"answer but records no human response"
+                )
     cur = task.get("current_step")
     if cur is not None:
         if not isinstance(cur, dict):
@@ -112,6 +142,14 @@ def validate(task: dict) -> list:
             errors.append("current_step.status must be 'in_progress'")
     if not isinstance(task.get("plan", []), list):
         errors.append("plan must be a list")
+    if not isinstance(task.get("grants", {}), dict):
+        errors.append("grants must be a dict")
+    if task.get("review", REVIEW_AUTO) not in REVIEW_MODES:
+        errors.append(f"invalid review mode: {task.get('review')!r}")
+    if not isinstance(task.get("reviewer", ""), str):
+        errors.append("reviewer must be a str")
+    if not isinstance(task.get("max_retries", 0), int):
+        errors.append("max_retries must be an int")
     return errors
 
 
@@ -155,6 +193,10 @@ def migrate(task: dict) -> dict:
         else:
             task["plan"] = []
     task.pop("pending", None)
+    task.setdefault("grants", {})
+    task.setdefault("review", REVIEW_AUTO)
+    task.setdefault("reviewer", "")
+    task.setdefault("max_retries", 2)
     return task
 
 
@@ -169,3 +211,18 @@ def last_succeeded(task: dict) -> Optional[dict]:
     """
     steps = task.get("steps") or []
     return steps[-1] if steps else None
+
+
+def set_grant(task: dict, name: str, value: bool = True) -> None:
+    """Grant (or revoke) an outbound operation for a task."""
+    if not isinstance(task.get("grants"), dict):
+        task["grants"] = {}
+    task["grants"][name] = bool(value)
+
+
+def has_grant(task: dict, name: str) -> bool:
+    """True if ``name`` is granted for this task."""
+    grants = task.get("grants")
+    if not isinstance(grants, dict):
+        return False
+    return bool(grants.get(name, False))
